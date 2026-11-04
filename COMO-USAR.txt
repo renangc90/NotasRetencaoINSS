@@ -1,0 +1,55 @@
+NOTAS COM RETENÇÃO DE INSS
+==========================
+
+O programa baixa as notas emitidas para o CNPJ da prefeitura e mostra as que
+têm INSS retido, com total e exportação para Excel.
+
+PRIMEIRO USO
+1. Extraia a pasta do .zip (botão direito > Extrair tudo) para a Área de
+   Trabalho ou Documentos. Não abra o programa de dentro do .zip.
+2. Abra NotasRetencaoINSS.exe. Se o Windows mostrar "O Windows protegeu o
+   computador", clique em "Mais informações" e depois em "Executar assim mesmo".
+3. O programa já vem configurado para a Prefeitura de Uberaba
+   (CNPJ 18.428.839/0001-90). A tela Configurações abre sozinha com o
+   certificado da prefeitura já escolhido (o mesmo e-CNPJ usado no e-CAC).
+   Confira e clique em Salvar.
+
+NO DIA A DIA
+- "Baixar notas novas": busca as notas que chegaram desde a última vez.
+  A primeira busca demora mais, porque traz todo o histórico.
+- O período já abre no mês passado. Troque as datas para ver outro período.
+- "Só com INSS retido" mostra só as notas com retenção. "Todas as notas
+  recebidas" mostra todas.
+- Notas canceladas ficam escondidas e nunca entram no total.
+- "Exportar para Excel" gera a planilha do que está na tela, com uma aba das
+  notas e outra somada por prestador.
+- Dois cliques numa nota abrem a pasta com o XML dela.
+
+NF-E (MERCADORIA) - OPCIONAL
+Vem desligada. Para a SEFAZ entregar o XML completo de uma NF-e (onde está
+a retenção), o programa precisa registrar a "Ciência da Operação" em cada
+nota, em nome da prefeitura. Esse evento fica registrado na SEFAZ, mas não
+confirma nem recusa a compra. Ligue só com o OK de quem cuida das NF-e da
+prefeitura.
+A SEFAZ só entrega NF-e dos últimos 3 meses e só aceita uma nova consulta
+1 hora depois da anterior. O valor da retenção aparece uma busca depois.
+
+ONDE FICAM OS DADOS
+Na pasta "dados", ao lado do programa: as notas, os XML e a configuração.
+Para trocar de computador, copie a pasta inteira. A senha do certificado,
+quando houver, só funciona no mesmo usuário do Windows.
+
+LIMITES
+- O programa só acha as NFS-e que estão no ADN (sistema nacional da NFS-e).
+  Se a cidade de algum prestador usa sistema próprio e não envia ao ADN, a
+  nota dele não aparece aqui.
+- Uberaba entrou no padrão nacional em 2026. Notas de prestadores de
+  Uberaba emitidas antes disso, no sistema antigo da cidade, não estão no ADN.
+- A retenção aparece só se o prestador preencheu o campo de INSS retido. Se
+  ele escreveu a retenção só no texto da nota, ela aparece em "Todas as notas
+  recebidas", mas não em "Só com INSS retido".
+- Só aparecem notas emitidas para o CNPJ configurado. Fundos e órgãos com
+  CNPJ próprio (Saúde, Educação etc.) precisam do certificado deles.
+- Pagamento por RPA, recibo ou nota em papel não passa pelo ADN.
+- No primeiro uso, compare um mês já fechado com o que foi lançado na
+  EFD-Reinf, para ver se falta alguma nota.

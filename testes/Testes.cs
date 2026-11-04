@@ -1,0 +1,435 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
+using System.Net;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Security.Cryptography.Xml;
+using System.Text;
+using System.Xml;
+
+namespace NotasRetencaoINSS
+{
+    static class Testes
+    {
+        static int ok, falhas;
+
+        static void Checar(bool cond, string nome)
+        {
+            if (cond) ok++; else { falhas++; Console.WriteLine("FALHOU: " + nome); }
+        }
+
+        static void Igual(object esperado, object obtido, string nome)
+        {
+            Checar(Equals(esperado, obtido), nome + " (esperado " + esperado + ", veio " + obtido + ")");
+        }
+
+        [STAThread]
+        static int Main(string[] args)
+        {
+            if (args.Length == 2 && args[0] == "capturas") return Capturas.Executar(args[1]);
+            return Executar();
+        }
+
+        public static int Executar()
+        {
+            string pasta = Path.Combine(Path.GetTempPath(), "NotasRetencaoINSS-testes-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Armazenamento.Pasta = pasta;
+            WebRequest.DefaultWebProxy = null;
+            System.Threading.Thread.CurrentThread.CurrentCulture = Formatos.PtBr;
+
+            Rodar("Configuração de fábrica", () =>
+            {
+                Configuracao c = Armazenamento.LerConfiguracao();
+                Igual("18428839000190", c.Cnpj, "CNPJ de Uberaba");
+                Igual("MG", c.Uf, "UF");
+                Checar(string.IsNullOrEmpty(c.CertificadoThumbprint), "sem certificado escolhido (abre Configurações)");
+            });
+            Rodar("Leitura NFS-e", LeituraNfse);
+            Rodar("Leitura NF-e", LeituraNfe);
+            Rodar("Retorno ADN", RetornoAdn);
+            Rodar("Certificado e assinatura", CertificadoEAssinatura);
+            Rodar("Repositório", Repositorio);
+            Rodar("Busca completa (servidor simulado)", BuscaCompleta);
+            Rodar("Bloqueio 656", Bloqueio656);
+            Rodar("Planilha", PlanilhaXlsx);
+
+            Console.WriteLine();
+            Console.WriteLine(ok + " verificações ok, " + falhas + " falha(s). Dados de teste em " + pasta);
+            return falhas == 0 ? 0 : 1;
+        }
+
+        static void Rodar(string nome, Action teste)
+        {
+            Console.WriteLine("- " + nome);
+            try { teste(); }
+            catch (Exception ex) { falhas++; Console.WriteLine("FALHOU (exceção): " + nome + ": " + ex); }
+        }
+
+        static void LeituraNfse()
+        {
+            string chave = Amostras.ChaveNfse(1);
+            Nota n = LeitorXml.LerNfse(Amostras.Nfse(chave, "123", Amostras.CnpjPrefeitura, 10000m, 1100m), "NFSE", chave, "7").Nota;
+            Igual(1100m, n.InssRetido, "vRetCP");
+            Igual(10000m, n.Valor, "vServ");
+            Igual("123", n.Numero, "nNFSe");
+            Igual("2026-10-15", n.Emissao, "emissão = dhProc");
+            Igual("2026-09-30", n.Competencia, "dCompet");
+            Igual(Amostras.CnpjPrestador, n.EmitenteDoc, "prestador");
+            Igual("LIMPA TUDO SERVIÇOS LTDA", n.EmitenteNome, "nome do prestador vem do emit");
+            Igual(Amostras.CnpjPrefeitura, n.TomadorDoc, "tomador (sem pegar CNPJ de dentro do endereço)");
+            Igual("070201", n.CodigoServico, "cTribNac");
+            Igual("Uberlândia", n.Municipio, "município");
+
+            Nota sem = LeitorXml.LerNfse(Amostras.Nfse(chave, "124", Amostras.CnpjPrefeitura, 500m, null), "NFSE", "", "8").Nota;
+            Igual(0m, sem.InssRetido, "sem tribFed = 0");
+            Igual(chave, sem.Chave, "chave pelo Id quando o ADN não manda");
+
+            EventoNota e = LeitorXml.LerNfse(Amostras.EventoCancelamentoNfse(chave), "EVENTO", chave, "9").Evento;
+            Igual("101101", e.TpEvento, "tipo do evento");
+            Checar(e.Cancela, "101101 cancela");
+            Igual("Cancelamento de NFS-e", e.Descricao, "xDesc");
+        }
+
+        static void LeituraNfe()
+        {
+            string chave = Amostras.ChaveNfe("4567");
+            Nota r = LeitorXml.LerNfe(Amostras.ResNfe(chave, 2500m), "resNFe", "1").Nota;
+            Checar(!r.Completo, "resumo não é completo");
+            Igual("4567", r.Numero, "número pela chave");
+            Igual("1", r.Serie, "série pela chave");
+            Igual(2500m, r.Valor, "vNF do resumo");
+
+            Nota c = LeitorXml.LerNfe(Amostras.ProcNfe(chave, "4567", 2500m, 275m), "procNFe", "2").Nota;
+            Checar(c.Completo, "procNFe completo");
+            Igual(275m, c.InssRetido, "vRetPrev");
+            Igual((decimal?)2500m, c.BaseInss, "vBCRetPrev");
+            Igual(Amostras.CnpjPrefeitura, c.TomadorDoc, "destinatário");
+            Igual("Manutenção de ar condicionado (e mais 1 item)", c.Descricao, "descrição dos itens");
+
+            Nota sem = LeitorXml.LerNfe(Amostras.ProcNfe(chave, "4567", 2500m, null), "procNFe", "3").Nota;
+            Igual(0m, sem.InssRetido, "sem retTrib = 0");
+            Checar(!sem.BaseInss.HasValue, "sem base");
+
+            EventoNota e = LeitorXml.LerNfe(Amostras.ResEventoCancelamentoNfe(chave), "resEvento", "4").Evento;
+            Checar(e.Cancela && e.Chave == chave, "cancelamento da NF-e");
+
+            RetornoDistribuicao d = Sefaz.LerRetornoDistribuicao(Amostras.SoapDist("138", "Documento localizado", 2, 9,
+                Amostras.DocZip(1, "resNFe_v1.01.xsd", Amostras.ResNfe(chave, 1m)) + Amostras.DocZip(2, "procNFe_v4.00.xsd", Amostras.ProcNfe(chave, "4567", 1m, 1m))));
+            Igual("138", d.CStat, "cStat");
+            Igual(2L, d.UltNsu, "ultNSU");
+            Igual(9L, d.MaxNsu, "maxNSU");
+            Igual(2, d.Docs.Count, "docZips");
+            Igual("procNFe", d.Docs[1].Schema, "schema sem versão");
+            Igual("2", d.Docs[1].Nsu, "NSU sem zeros");
+        }
+
+        static string JsonLote(string status, IEnumerable<string> itens)
+        {
+            return "{\"StatusProcessamento\":\"" + status + "\",\"LoteDFe\":[" + string.Join(",", itens) + "],\"Alertas\":null,\"Erros\":null}";
+        }
+
+        static string ItemAdn(long nsu, string chave, string tipo, string xml)
+        {
+            return "{\"NSU\":" + nsu + ",\"ChaveAcesso\":\"" + chave + "\",\"TipoDocumento\":\"" + tipo + "\",\"ArquivoXml\":\"" + Amostras.Gzip64(xml) + "\",\"DataHoraGeracao\":\"2026-10-15T09:12:00\"}";
+        }
+
+        static void RetornoAdn()
+        {
+            string chave = Amostras.ChaveNfse(1);
+            RetornoAdn r = Adn.LerRetorno(200, JsonLote("DOCUMENTOS_LOCALIZADOS", new[] { ItemAdn(11, chave, "NFSE", Amostras.Nfse(chave, "1", Amostras.CnpjPrefeitura, 1m, 1m)) }), 10);
+            Igual(1, r.Docs.Count, "1 doc");
+            Igual(11L, r.UltNsu, "ultNSU = maior NSU");
+            Checar(r.Acabou, "lote menor que 50 = acabou");
+            Checar(r.Docs[0].Xml.Contains("vRetCP"), "gunzip");
+
+            RetornoAdn vazio = Adn.LerRetorno(404, "{\"StatusProcessamento\":\"NENHUM_DOCUMENTO_LOCALIZADO\",\"Erros\":[{\"Codigo\":\"E2220\",\"Descricao\":\"Nenhum documento\"}]}", 10);
+            Checar(vazio.Acabou && vazio.UltNsu == 10, "nenhum documento não é erro");
+            Checar(Adn.LerRetorno(404, "", 10).Acabou, "404 sem corpo");
+
+            string msg = "";
+            try { Adn.LerRetorno(400, "{\"StatusProcessamento\":\"REJEICAO\",\"Erros\":[{\"Codigo\":\"E1\",\"Descricao\":\"CNPJ inválido\"}]}", 0); }
+            catch (ErroAviso ex) { msg = ex.Message; }
+            Checar(msg.Contains("CNPJ inválido"), "rejeição vira aviso com o motivo");
+        }
+
+        // ---------------------------------------------------------------- certificado
+
+        static X509Certificate2 certTeste;
+
+        /// <summary>e-CNPJ de teste: CN sem o CNPJ, CNPJ só no SAN (OID 2.16.76.1.3.3), recarregado de um .pfx.</summary>
+        static X509Certificate2 CertificadoTeste()
+        {
+            if (certTeste != null) return certTeste;
+            using (RSA rsa = RSA.Create())
+            {
+                rsa.KeySize = 2048;
+                var req = new CertificateRequest("CN=MUNICIPIO DE TESTE, O=ICP-Brasil", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+                byte[] cnpj = Encoding.ASCII.GetBytes(Amostras.CnpjPrefeitura);
+                var san = new List<byte> { 0x30, 0x1B, 0xA0, 0x19, 0x06, 0x05, 0x60, 0x4C, 0x01, 0x03, 0x03, 0xA0, 0x10, 0x04, 0x0E };
+                san.AddRange(cnpj);
+                req.CertificateExtensions.Add(new X509Extension(new Oid("2.5.29.17"), san.ToArray(), false));
+                using (X509Certificate2 c = req.CreateSelfSigned(DateTimeOffset.Now.AddDays(-1), DateTimeOffset.Now.AddYears(1)))
+                {
+                    string pfx = Path.Combine(Armazenamento.Pasta, "teste.pfx");
+                    File.WriteAllBytes(pfx, c.Export(X509ContentType.Pfx, "senha123"));
+                    certTeste = Certificados.AbrirPfx(pfx, "senha123").Certificado;
+                }
+            }
+            return certTeste;
+        }
+
+        static void CertificadoEAssinatura()
+        {
+            X509Certificate2 c = CertificadoTeste();
+            Igual(Amostras.CnpjPrefeitura, Certificados.CnpjDoCertificado(c), "CNPJ pelo SAN");
+            Igual("MUNICIPIO DE TESTE", Certificados.NomeDoCertificado(c), "nome");
+
+            string erro = "";
+            try { Certificados.AbrirPfx(Path.Combine(Armazenamento.Pasta, "teste.pfx"), "errada"); }
+            catch (ErroAviso ex) { erro = ex.Message; }
+            Checar(erro.Length > 0, "senha errada vira aviso: " + erro);
+
+            string protegida = Armazenamento.Proteger("senha123");
+            Checar(protegida != "senha123" && Armazenamento.Desproteger(protegida) == "senha123", "DPAPI ida e volta");
+
+            var cfg = new Configuracao { Cnpj = Amostras.CnpjPrefeitura };
+            string chave = Amostras.ChaveNfe("1");
+            XmlElement evento = Sefaz.MontarCiencia(c, cfg, chave, "2026-11-04T10:00:00-03:00");
+            Checar(VerificarAssinaturas("<envEvento xmlns=\"http://www.portalfiscal.inf.br/nfe\" versao=\"1.00\"><idLote>1</idLote>" + evento.OuterXml + "</envEvento>", c) == 1,
+                "assinatura confere dentro do envEvento");
+            string adulterado = evento.OuterXml.Replace("<tpAmb>1</tpAmb>", "<tpAmb>2</tpAmb>");
+            Checar(VerificarAssinaturas("<envEvento xmlns=\"http://www.portalfiscal.inf.br/nfe\" versao=\"1.00\"><idLote>1</idLote>" + adulterado + "</envEvento>", c) == 0,
+                "assinatura não confere com o XML adulterado");
+            string x = evento.OuterXml;
+            Checar(x.Contains("xmldsig#rsa-sha1") && x.Contains("xmldsig#sha1") && x.Contains("REC-xml-c14n-20010315") && x.Contains("enveloped-signature"), "algoritmos do leiaute (RSA-SHA1/C14N)");
+            Checar(x.Contains("URI=\"#ID210210" + chave + "01\""), "Reference para o Id do infEvento");
+            Checar(x.Contains("<cOrgao>91</cOrgao>") && x.Contains("<descEvento>Ciencia da Operacao</descEvento>"), "campos do evento");
+        }
+
+        /// <summary>Verifica cada Signature como a SEFAZ faria: o envEvento como documento próprio.</summary>
+        static int VerificarAssinaturas(string envEvento, X509Certificate2 cert)
+        {
+            var doc = new XmlDocument { PreserveWhitespace = true };
+            doc.LoadXml(envEvento);
+            int validas = 0;
+            foreach (XmlElement sig in doc.GetElementsByTagName("Signature", SignedXml.XmlDsigNamespaceUrl))
+            {
+                var sx = new SignedXml((XmlElement)sig.ParentNode);
+                sx.LoadXml(sig);
+                if (sx.CheckSignature(cert, true)) validas++;
+            }
+            return validas;
+        }
+
+        // ---------------------------------------------------------------- repositório
+
+        static void Repositorio()
+        {
+            var repo = new Repositorio(new BaseNotas());
+            string chave = Amostras.ChaveNfe("77");
+            Checar(repo.GravarNota(LeitorXml.LerNfe(Amostras.ResNfe(chave, 10m), "resNFe", "1").Nota, Amostras.ResNfe(chave, 10m)), "resumo entra como novo");
+            Igual(1, repo.NfeAguardandoCiencia().Count, "aguardando ciência");
+            repo.Buscar("nfe", chave).CienciaOk = true;
+            Igual(0, repo.NfeAguardandoCiencia().Count, "com ciência sai da fila");
+
+            string proc = Amostras.ProcNfe(chave, "77", 10m, 1.1m);
+            Checar(!repo.GravarNota(LeitorXml.LerNfe(proc, "procNFe", "5").Nota, proc), "completa substitui (não conta como nova)");
+            Nota n = repo.Buscar("nfe", chave);
+            Checar(n.Completo && n.CienciaOk && n.InssRetido == 1.1m, "completa manteve a ciência");
+            Checar(File.Exists(Armazenamento.CaminhoCompleto(n.ArquivoXml)) && n.ArquivoXml.Contains("2026-10"), "XML gravado na pasta do mês");
+
+            repo.GravarNota(LeitorXml.LerNfe(Amostras.ResNfe(chave, 10m), "resNFe", "6").Nota, null);
+            Checar(repo.Buscar("nfe", chave).Completo, "resumo atrasado não estraga a completa");
+
+            string chaveNfse = Amostras.ChaveNfse(5);
+            repo.GravarEvento(LeitorXml.LerNfse(Amostras.EventoCancelamentoNfse(chaveNfse), "EVENTO", chaveNfse, "10").Evento, Amostras.EventoCancelamentoNfse(chaveNfse));
+            repo.GravarNota(LeitorXml.LerNfse(Amostras.Nfse(chaveNfse, "5", Amostras.CnpjPrefeitura, 1m, 1m), "NFSE", chaveNfse, "11").Nota, Amostras.Nfse(chaveNfse, "5", Amostras.CnpjPrefeitura, 1m, 1m));
+            Checar(repo.Cancelada(repo.Buscar("nfse", chaveNfse)), "cancelamento que chegou antes da nota vale");
+
+            Armazenamento.SalvarNotas(repo.Base);
+            var relido = new Repositorio(Armazenamento.LerNotas());
+            Checar(relido.Cancelada(relido.Buscar("nfse", chaveNfse)) && relido.Buscar("nfe", chave).InssRetido == 1.1m, "salvar e reler");
+            File.Delete(Path.Combine(Armazenamento.Pasta, "notas.json"));
+        }
+
+        // ---------------------------------------------------------------- busca completa
+
+        static void BuscaCompleta()
+        {
+            string cancelada = Amostras.ChaveNfse(3);
+            string chA = Amostras.ChaveNfe("1001"), chB = Amostras.ChaveNfe("1002"), chC = Amostras.ChaveNfe("1003"), chD = Amostras.ChaveNfe("1004");
+            int consultasNfe = 0;
+            bool liberarCompleto = false;
+
+            ServidorFalso.Rota rota = (ServidorFalso.Pedido p, out int status, out string corpo) =>
+            {
+                status = 200;
+                corpo = "";
+                if (p.Caminho.StartsWith("/adn/DFe/1?"))
+                {
+                    // Lote cheio (50): 47 notas p/ a prefeitura, 1 em que ela é prestadora, 1 sem INSS, 1 cancelamento.
+                    var itens = new List<string>();
+                    for (int i = 1; i <= 47; i++)
+                        itens.Add(ItemAdn(i, Amostras.ChaveNfse(i), "NFSE", Amostras.Nfse(Amostras.ChaveNfse(i), i.ToString(), Amostras.CnpjPrefeitura, 1000m, 110m)));
+                    itens.Add(ItemAdn(48, Amostras.ChaveNfse(48), "NFSE", Amostras.Nfse(Amostras.ChaveNfse(48), "48", "99888777000166", 1000m, 110m)));
+                    itens.Add(ItemAdn(49, Amostras.ChaveNfse(49), "NFSE", Amostras.Nfse(Amostras.ChaveNfse(49), "49", Amostras.CnpjPrefeitura, 800m, null)));
+                    itens.Add(ItemAdn(50, cancelada, "EVENTO", Amostras.EventoCancelamentoNfse(cancelada)));
+                    corpo = JsonLote("DOCUMENTOS_LOCALIZADOS", itens);
+                }
+                else if (p.Caminho.StartsWith("/adn/DFe/51?"))
+                    corpo = JsonLote("DOCUMENTOS_LOCALIZADOS", new[] { ItemAdn(51, Amostras.ChaveNfse(51), "NFSE", Amostras.Nfse(Amostras.ChaveNfse(51), "51", Amostras.CnpjPrefeitura, 2000m, 220m, "2026-11-02T08:00:00-03:00")) });
+                else if (p.Caminho.StartsWith("/adn/DFe/"))
+                {
+                    status = 404;
+                    corpo = "{\"StatusProcessamento\":\"NENHUM_DOCUMENTO_LOCALIZADO\"}";
+                }
+                else if (p.Caminho == "/dist")
+                {
+                    consultasNfe++;
+                    if (liberarCompleto)
+                        corpo = Amostras.SoapDist("138", "Documento localizado", 6, 6, Amostras.DocZip(6, "procNFe_v4.00.xsd", Amostras.ProcNfe(chA, "1001", 5000m, 550m)));
+                    else if (p.Corpo.Contains("<ultNSU>000000000000000</ultNSU>"))
+                        corpo = Amostras.SoapDist("138", "Documento localizado", 3, 5,
+                            Amostras.DocZip(1, "resNFe_v1.01.xsd", Amostras.ResNfe(chA, 5000m)) + Amostras.DocZip(2, "resNFe_v1.01.xsd", Amostras.ResNfe(chB, 300m))
+                            + Amostras.DocZip(3, "procNFe_v4.00.xsd", Amostras.ProcNfe(chC, "1003", 1200m, 132m)));
+                    else
+                        corpo = Amostras.SoapDist("138", "Documento localizado", 5, 5,
+                            Amostras.DocZip(4, "resEvento_v1.01.xsd", Amostras.ResEventoCancelamentoNfe(chB)) + Amostras.DocZip(5, "procNFe_v4.00.xsd", Amostras.ProcNfe(chD, "1004", 700m, null)));
+                }
+                else if (p.Caminho == "/evento")
+                {
+                    var rets = new StringBuilder();
+                    foreach (string ch in new[] { chA, chB, chC, chD })
+                        if (p.Corpo.Contains("<chNFe>" + ch + "</chNFe>"))
+                            rets.Append("<retEvento versao=\"1.00\"><infEvento><tpAmb>1</tpAmb><cOrgao>91</cOrgao><cStat>135</cStat><xMotivo>Evento registrado e vinculado a NF-e</xMotivo><chNFe>" + ch + "</chNFe></infEvento></retEvento>");
+                    corpo = "<soap:Envelope xmlns:soap=\"http://www.w3.org/2003/05/soap-envelope\"><soap:Body><nfeRecepcaoEventoNFResult xmlns=\"http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4\"><retEnvEvento xmlns=\"http://www.portalfiscal.inf.br/nfe\" versao=\"1.00\"><idLote>1</idLote><tpAmb>1</tpAmb><cOrgao>91</cOrgao><cStat>128</cStat><xMotivo>Lote de evento processado</xMotivo>"
+                        + rets + "</retEnvEvento></nfeRecepcaoEventoNFResult></soap:Body></soap:Envelope>";
+                }
+                else status = 500;
+            };
+
+            using (var srv = new ServidorFalso(rota))
+            {
+                var cfg = new Configuracao
+                {
+                    Cnpj = Amostras.CnpjPrefeitura, Uf = "MG", IncluirNfe = true, NomeEntidade = "MUNICIPIO DE TESTE",
+                    UrlAdn = srv.Url + "/adn", UrlSefazDistribuicao = srv.Url + "/dist", UrlSefazEvento = srv.Url + "/evento",
+                };
+                var repo = new Repositorio(new BaseNotas());
+                var cert = new CertificadoInfo { Certificado = CertificadoTeste(), Cnpj = Amostras.CnpjPrefeitura, Nome = "MUNICIPIO DE TESTE" };
+                var mensagens = new List<string>();
+                Sincronizador s = NovoSinc(cfg, repo, cert, mensagens);
+
+                ResultadoBusca r = s.Executar();
+                Igual(0, r.Avisos.Count, "sem avisos na 1ª busca: " + string.Join(" | ", r.Avisos));
+                Igual(50, r.NfseNovas, "NFS-e novas (2 lotes)");
+                Igual("51", cfg.UltNsuNfse, "NSU do ADN guardado");
+                Igual(4, r.NfeNovas, "NF-e novas");
+                Igual("5", cfg.UltNsuNfe, "NSU da SEFAZ guardado");
+                Igual(2, consultasNfe, "2 consultas à SEFAZ (parou no maxNSU)");
+                Checar(Formatos.LerIso(cfg.NfeLiberadaEm) > DateTime.Now.AddMinutes(59), "regra de 1 hora registrada");
+                Igual(1, r.Ciencias, "ciência só da NF-e só com resumo e não cancelada");
+                Checar(repo.Cancelada(repo.Buscar("nfse", cancelada)), "NFS-e 3 cancelada pelo evento");
+                Checar(repo.Cancelada(repo.Buscar("nfe", chB)), "NF-e B cancelada");
+                Checar(repo.Buscar("nfe", chA).CienciaOk, "ciência da A registrada");
+                Igual(132m, repo.Buscar("nfe", chC).InssRetido, "INSS da NF-e C");
+
+                ServidorFalso.Pedido evento = srv.Pedidos.Last(p => p.Caminho == "/evento");
+                string env = LeitorXml.No(LeitorXml.Carregar(evento.Corpo), "envEvento").OuterXml;
+                Igual(1, VerificarAssinaturas(env, cert.Certificado), "assinatura do evento enviado confere");
+                Checar(evento.Corpo.Contains("<cUFAutor>") == false && srv.Pedidos.Any(p => p.Caminho == "/dist" && p.Corpo.Contains("<cUFAutor>31</cUFAutor>")), "cUFAutor de MG");
+
+                Checar(File.Exists(Path.Combine(Armazenamento.Pasta, "notas.json")) && File.Exists(Path.Combine(Armazenamento.Pasta, "config.json")), "gravou os arquivos");
+                var relida = new Repositorio(Armazenamento.LerNotas());
+                Igual(repo.Base.Notas.Count, relida.Base.Notas.Count, "notas relidas do disco");
+                Igual("51", Armazenamento.LerConfiguracao().UltNsuNfse, "config relida do disco");
+
+                // 2ª busca logo depois: ADN vazio, SEFAZ não é consultada (1 hora), ciência não repete.
+                int antes = consultasNfe, eventosAntes = srv.Pedidos.Count(p => p.Caminho == "/evento");
+                r = NovoSinc(cfg, repo, cert, mensagens).Executar();
+                Igual(0, r.NfseNovas, "nada novo no ADN");
+                Igual(antes, consultasNfe, "SEFAZ respeitou 1 hora");
+                Checar(r.Avisos.Any(a => a.Contains("liberada às")), "avisou o horário");
+                Igual(eventosAntes, srv.Pedidos.Count(p => p.Caminho == "/evento"), "não repetiu ciência");
+
+                // Depois da hora: chega o XML completo da A, com a retenção.
+                cfg.NfeLiberadaEm = DateTime.Now.AddMinutes(-1).ToString("yyyy-MM-ddTHH:mm:ss");
+                liberarCompleto = true;
+                r = NovoSinc(cfg, repo, cert, mensagens).Executar();
+                Nota notaA = repo.Buscar("nfe", chA);
+                Checar(notaA.Completo && notaA.InssRetido == 550m && notaA.CienciaOk, "XML completo da A chegou com INSS");
+                Igual(0, repo.NfeSoResumo(), "nenhuma NF-e só com resumo");
+                Checar(mensagens.Any(m => m.StartsWith("NFS-e")) && mensagens.Any(m => m.StartsWith("NF-e")), "progresso informado");
+
+                // Filtro da tela: só recebidas, com INSS, sem canceladas, no período de outubro.
+                var tela = repo.Base.Notas.Where(n => n.InssRetido > 0 && !repo.Cancelada(n) && n.Emissao.StartsWith("2026-10")
+                                                       && (string.IsNullOrEmpty(n.TomadorDoc) || n.TomadorDoc.StartsWith(Amostras.CnpjPrefeitura.Substring(0, 8)))).ToList();
+                Igual(46 + 2, tela.Count, "notas de outubro com INSS (46 NFS-e + 2 NF-e)");
+            }
+            File.Delete(Path.Combine(Armazenamento.Pasta, "notas.json"));
+        }
+
+        static Sincronizador NovoSinc(Configuracao cfg, Repositorio repo, CertificadoInfo cert, List<string> mensagens)
+        {
+            return new Sincronizador(cfg, repo, cert, m => { lock (mensagens) mensagens.Add(m); }) { EsperaLoteNfseMs = 0, EsperaLoteNfeMs = 0, EsperaCienciaMs = 0 };
+        }
+
+        static void Bloqueio656()
+        {
+            ServidorFalso.Rota rota = (ServidorFalso.Pedido p, out int status, out string corpo) =>
+            {
+                status = p.Caminho.StartsWith("/adn") ? 404 : 200;
+                corpo = p.Caminho.StartsWith("/adn") ? "" : Amostras.SoapDist("656", "Rejeicao: Consumo Indevido", 0, 0, "");
+            };
+            using (var srv = new ServidorFalso(rota))
+            {
+                var cfg = new Configuracao { Cnpj = Amostras.CnpjPrefeitura, Uf = "MG", IncluirNfe = true, UrlAdn = srv.Url + "/adn", UrlSefazDistribuicao = srv.Url + "/dist", UrlSefazEvento = srv.Url + "/evento" };
+                var cert = new CertificadoInfo { Certificado = CertificadoTeste() };
+                ResultadoBusca r = NovoSinc(cfg, new Repositorio(new BaseNotas()), cert, new List<string>()).Executar();
+                Checar(r.Avisos.Any(a => a.Contains("656")), "aviso do 656");
+                Checar(Formatos.LerIso(cfg.NfeLiberadaEm) > DateTime.Now.AddMinutes(59), "bloqueio de 1 hora guardado");
+                Igual("0", cfg.UltNsuNfe, "NSU não andou");
+            }
+            File.Delete(Path.Combine(Armazenamento.Pasta, "notas.json"));
+        }
+
+        // ---------------------------------------------------------------- planilha
+
+        static void PlanilhaXlsx()
+        {
+            var repo = new Repositorio(new BaseNotas());
+            for (int i = 1; i <= 3; i++)
+            {
+                string ch = Amostras.ChaveNfse(100 + i);
+                repo.GravarNota(LeitorXml.LerNfse(Amostras.Nfse(ch, i.ToString(), Amostras.CnpjPrefeitura, 1000m * i, 110m * i), "NFSE", ch, i.ToString()).Nota, null);
+            }
+            string chC = Amostras.ChaveNfse(103);
+            repo.GravarEvento(new EventoNota { Tipo = "nfse", Chave = chC, TpEvento = "101101", Nsu = "9", Cancela = true }, null);
+            Nota esquisita = repo.Base.Notas[0];
+            esquisita.EmitenteNome = "A & B <Serviços> \"Ltda\"\u0001";
+
+            string arq = Path.Combine(Armazenamento.Pasta, "teste.xlsx");
+            Planilha.Gerar(arq, "Notas com retenção de INSS — teste", repo.Base.Notas, repo.Cancelada);
+            using (ZipArchive z = ZipFile.OpenRead(arq))
+            {
+                foreach (ZipArchiveEntry e in z.Entries)
+                    using (var sr = new StreamReader(e.Open()))
+                    {
+                        var d = new XmlDocument();
+                        d.LoadXml(sr.ReadToEnd());
+                    }
+                Checar(z.Entries.Count == 7, "7 partes no xlsx");
+                string s1 = new StreamReader(z.GetEntry("xl/worksheets/sheet1.xml").Open()).ReadToEnd();
+                string s2 = new StreamReader(z.GetEntry("xl/worksheets/sheet2.xml").Open()).ReadToEnd();
+                Checar(s1.Contains("SUMIF(N4:N6,\"&lt;&gt;Cancelada\",M4:M6)") || s1.Contains("SUMIF(N4:N6,&quot;&lt;&gt;Cancelada&quot;,M4:M6)"), "total com SUMIF sem canceladas");
+                Checar(s1.Contains("<v>330</v>") || s1.Contains("<v>330.00</v>"), "INSS somado sem a cancelada (110+220)");
+                Checar(s1.Contains("Cancelada"), "situação cancelada na linha");
+                Checar(s1.Contains("A &amp; B &lt;Serviços&gt;"), "texto escapado");
+                Checar(s2.Contains("12.345.678/0001-90") && (s2.Contains("<v>3000</v>") || s2.Contains("<v>3000.00</v>")), "aba por prestador somada");
+            }
+        }
+    }
+}
