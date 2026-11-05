@@ -13,6 +13,12 @@ namespace NotasRetencaoINSS
         public string Texto;
     }
 
+    public class RespostaArquivo
+    {
+        public int Status;
+        public byte[] Bytes;
+    }
+
     /// <summary>
     /// HTTPS com o certificado da prefeitura como certificado de cliente (TLS mútuo).
     /// Usa o proxy configurado no Windows (com o login do usuário), como o navegador.
@@ -39,17 +45,49 @@ namespace NotasRetencaoINSS
             return Requisitar(cert, url, "POST", "application/soap+xml; charset=utf-8; action=\"" + action + "\"", envelope, servico);
         }
 
-        static RespostaHttp Requisitar(X509Certificate2 cert, string url, string metodo, string contentType, string corpo, string servico)
+        /// <summary>GET de um arquivo binário (o PDF da nota). Erro HTTP volta no Status; falha de rede vira ErroAviso.</summary>
+        public static RespostaArquivo BaixarArquivo(X509Certificate2 cert, string url, string accept, string servico)
+        {
+            HttpWebRequest req = Criar(cert, url, "GET", accept);
+            try
+            {
+                using (var resp = (HttpWebResponse)req.GetResponse()) return LerBytes(resp);
+            }
+            catch (WebException ex)
+            {
+                var resp = ex.Response as HttpWebResponse;
+                if (resp != null) using (resp) return LerBytes(resp);
+                throw new ErroAviso(MensagemDeRede(ex, url, servico));
+            }
+        }
+
+        static HttpWebRequest Criar(X509Certificate2 cert, string url, string metodo, string accept)
         {
             var req = (HttpWebRequest)WebRequest.Create(url);
             req.Method = metodo;
             req.Timeout = TimeoutMs;
             req.ReadWriteTimeout = TimeoutMs;
             req.KeepAlive = true;
-            req.Accept = corpo == null ? "application/json" : "application/soap+xml, text/xml";
+            req.Accept = accept;
             req.UserAgent = "NotasRetencaoINSS/1.0";
             req.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
             if (cert != null) req.ClientCertificates.Add(cert);
+            return req;
+        }
+
+        static RespostaArquivo LerBytes(HttpWebResponse resp)
+        {
+            using (var s = resp.GetResponseStream())
+            using (var m = new MemoryStream())
+            {
+                s.CopyTo(m);
+                return new RespostaArquivo { Status = (int)resp.StatusCode, Bytes = m.ToArray() };
+            }
+        }
+
+        static RespostaHttp Requisitar(X509Certificate2 cert, string url, string metodo, string contentType, string corpo, string servico)
+        {
+            HttpWebRequest req = Criar(cert, url, metodo, corpo == null ? "application/json" : "application/soap+xml, text/xml");
 
             try
             {

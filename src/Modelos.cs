@@ -76,9 +76,11 @@ namespace NotasRetencaoINSS
         public string NfeMotivoEspera { get; set; }
         public string UltimaBuscaEm { get; set; }
         public string UltimaBuscaResumo { get; set; }
+        public string PastaArquivos { get; set; }        // última pasta usada em "Salvar XML e PDF"
 
         // Só para os testes (servidor simulado). Vazio = endereços oficiais.
         public string UrlAdn { get; set; }
+        public string UrlDanfse { get; set; }
         public string UrlSefazDistribuicao { get; set; }
         public string UrlSefazEvento { get; set; }
 

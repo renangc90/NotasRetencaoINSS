@@ -25,8 +25,9 @@ Usa o `csc.exe` que já vem no Windows (`%WINDIR%\Microsoft.NET\Framework64\v4.0
 | `src/Certificados.cs` | Repositório do Windows (A1 importado ou A3) ou .pfx. CNPJ pelo SAN 2.16.76.1.3.3 ou pelo CN |
 | `src/ClienteFiscal.cs` | `HttpWebRequest` com TLS 1.2 e certificado de cliente. Usa o proxy do Windows com as credenciais do usuário |
 | `src/Planilha.cs` | .xlsx feito à mão (ZipArchive), sem depender de Excel |
+| `src/Exportador.cs` | Botão "Salvar XML e PDF": copia o XML guardado e baixa o PDF da NFS-e (DANFSe) em `GET {adn}/danfse/{chave}`, guardado em `dados\pdf\...`. Para de pedir PDF depois de 3 falhas seguidas |
 
 ## Status
 
-- Testado só com servidor simulado e certificado autoassinado: 95 verificações. **Ainda não rodou contra o ADN e a SEFAZ reais com o A1 da prefeitura.**
-- Homologação: `"Ambiente": 2` no `dados\config.json`. As chaves `UrlAdn`, `UrlSefazDistribuicao` e `UrlSefazEvento` servem só para os testes.
+- Testado só com servidor simulado e certificado autoassinado: 126 verificações. A distribuição de NFS-e (DFe) já respondeu certo no ADN real. **A SEFAZ e o PDF do ADN ainda não foram conferidos de verdade**: o endereço `/danfse/{chave}` veio de clientes de terceiros.
+- Homologação: `"Ambiente": 2` no `dados\config.json`. As chaves `UrlAdn`, `UrlDanfse`, `UrlSefazDistribuicao` e `UrlSefazEvento` servem só para os testes.

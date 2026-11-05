@@ -133,6 +133,23 @@ namespace NotasRetencaoINSS
             return Path.Combine(Pasta, relativo);
         }
 
+        /// <summary>pdf\nfse\2026-10\chave.pdf — o PDF baixado do ADN fica guardado para não baixar de novo.</summary>
+        public static string CaminhoPdf(Nota n)
+        {
+            string mes = string.IsNullOrEmpty(n.Emissao) || n.Emissao.Length < 7 ? "sem-data" : n.Emissao.Substring(0, 7);
+            return Path.Combine(Pasta, "pdf", n.Tipo, mes, n.Chave + ".pdf");
+        }
+
+        public static void GravarPdf(Nota n, byte[] pdf)
+        {
+            string caminho = CaminhoPdf(n);
+            Directory.CreateDirectory(Path.GetDirectoryName(caminho));
+            string tmp = caminho + ".tmp";
+            File.WriteAllBytes(tmp, pdf);
+            if (File.Exists(caminho)) File.Delete(caminho);
+            File.Move(tmp, caminho);
+        }
+
         /// <summary>xml\nfse\2026-10\chave.xml — devolve o caminho relativo.</summary>
         public static string GravarXml(string tipo, string pastaMes, string nomeArquivo, string xml)
         {

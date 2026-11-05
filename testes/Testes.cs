@@ -55,6 +55,7 @@ namespace NotasRetencaoINSS
             Rodar("Busca completa (servidor simulado)", BuscaCompleta);
             Rodar("Bloqueio 656", Bloqueio656);
             Rodar("Planilha", PlanilhaXlsx);
+            Rodar("Salvar XML e PDF (servidor simulado)", SalvarArquivos);
 
             Console.WriteLine();
             Console.WriteLine(ok + " verificações ok, " + falhas + " falha(s). Dados de teste em " + pasta);
@@ -392,6 +393,118 @@ namespace NotasRetencaoINSS
                 Checar(r.Avisos.Any(a => a.Contains("656")), "aviso do 656");
                 Checar(Formatos.LerIso(cfg.NfeLiberadaEm) > DateTime.Now.AddMinutes(59), "bloqueio de 1 hora guardado");
                 Igual("0", cfg.UltNsuNfe, "NSU não andou");
+            }
+            File.Delete(Path.Combine(Armazenamento.Pasta, "notas.json"));
+        }
+
+        // ---------------------------------------------------------------- salvar XML e PDF
+
+        static void SalvarArquivos()
+        {
+            var repo = new Repositorio(new BaseNotas());
+            var nfse = new List<Nota>();
+            for (int i = 1; i <= 3; i++)
+            {
+                string ch = Amostras.ChaveNfse(300 + i);
+                string xml = Amostras.Nfse(ch, (700 + i).ToString(), Amostras.CnpjPrefeitura, 100m * i, 11m * i);
+                repo.GravarNota(LeitorXml.LerNfse(xml, "NFSE", ch, i.ToString()).Nota, xml);
+                nfse.Add(repo.Buscar("nfse", ch));
+            }
+            nfse[0].EmitenteNome = "LIMPA/TUDO: SERVIÇOS* \"LTDA\".";
+            // Mesmo dia, número e prestador da 3ª: o nome do arquivo repetiria.
+            string chDup = Amostras.ChaveNfse(399);
+            string xmlDup = Amostras.Nfse(chDup, "703", Amostras.CnpjPrefeitura, 1m, 1m);
+            repo.GravarNota(LeitorXml.LerNfse(xmlDup, "NFSE", chDup, "9").Nota, xmlDup);
+            Nota dup = repo.Buscar("nfse", chDup);
+            dup.EmitenteNome = nfse[2].EmitenteNome;
+
+            string chNfe = Amostras.ChaveNfe("3001");
+            string proc = Amostras.ProcNfe(chNfe, "3001", 500m, 55m);
+            repo.GravarNota(LeitorXml.LerNfe(proc, "procNFe", "1").Nota, proc);
+            string chRes = Amostras.ChaveNfe("3002");
+            repo.GravarNota(LeitorXml.LerNfe(Amostras.ResNfe(chRes, 80m), "resNFe", "2").Nota, null);
+
+            var todas = new List<Nota>(nfse) { dup, repo.Buscar("nfe", chNfe), repo.Buscar("nfe", chRes) };
+            string modo = "pdf";   // pdf | html | 404
+            ServidorFalso.Rota rota = (ServidorFalso.Pedido p, out int status, out string corpo) =>
+            {
+                status = 200;
+                corpo = "";
+                string ch = p.Caminho.StartsWith("/danfse/") ? p.Caminho.Substring(8) : "";
+                if (ch == "" || p.Metodo != "GET") { status = 500; return; }
+                if (modo == "404" || ch == nfse[1].Chave) { status = 404; corpo = "{\"erro\":\"nao encontrada\"}"; return; }
+                if (modo == "html") { corpo = "<html><body>Sessão expirada</body></html>"; return; }
+                corpo = "%PDF-1.4\n% teste " + ch + "\n%%EOF";
+            };
+
+            using (var srv = new ServidorFalso(rota))
+            {
+                var cfg = new Configuracao { Cnpj = Amostras.CnpjPrefeitura, UrlDanfse = srv.Url + "/danfse/" };
+                var cert = new CertificadoInfo { Certificado = CertificadoTeste(), Cnpj = Amostras.CnpjPrefeitura };
+                string destino = Path.Combine(Armazenamento.Pasta, "salvos 1");
+                var msgs = new List<string>();
+
+                Checar(Exportador.PrecisaBaixarPdf(todas), "sem PDF guardado: precisa do certificado");
+                ResultadoExportacao r = new Exportador(cfg, cert, m => msgs.Add(m)) { EsperaPdfMs = 0 }.Executar(todas, destino);
+                Igual(5, r.Xml, "XML: 4 NFS-e + 1 NF-e completa");
+                Igual(3, r.Pdf, "PDF das NFS-e que o ADN entregou");
+                Igual(1, r.PdfFaltando, "NFS-e com 404 ficou sem PDF");
+                Checar((r.MotivoPdf ?? "").Contains("404"), "motivo do 404: " + r.MotivoPdf);
+                Igual(1, r.Nfe, "NF-e só com XML");
+                Igual(1, r.SemXml, "NF-e só com resumo ficou de fora");
+                Checar(!r.DesistiuPdf && msgs.Count == todas.Count, "progresso por nota");
+                Igual(4, srv.Pedidos.Count, "um GET /danfse por NFS-e");
+
+                string nome1 = Exportador.NomeArquivo(nfse[0]);
+                Igual("2026-10-15 NFS-e 701 LIMPA TUDO SERVIÇOS LTDA", nome1, "nome sem caracteres proibidos");
+                Checar(File.Exists(Path.Combine(destino, nome1 + ".xml")) && File.Exists(Path.Combine(destino, nome1 + ".pdf")), "XML e PDF com o mesmo nome");
+                Igual(File.ReadAllText(Armazenamento.CaminhoCompleto(nfse[0].ArquivoXml)), File.ReadAllText(Path.Combine(destino, nome1 + ".xml")), "XML copiado igual ao guardado");
+                Checar(File.ReadAllText(Path.Combine(destino, nome1 + ".pdf")).Contains(nfse[0].Chave), "PDF é o da nota certa");
+                Checar(!File.Exists(Path.Combine(destino, Exportador.NomeArquivo(nfse[1]) + ".pdf")), "sem PDF falso para o 404");
+                string nome3 = Exportador.NomeArquivo(nfse[2]);
+                Checar(File.Exists(Path.Combine(destino, nome3 + ".pdf")) && File.Exists(Path.Combine(destino, nome3 + " " + chDup + ".pdf")), "nome repetido ganha a chave");
+                Igual(8, Directory.GetFiles(destino).Length, "arquivos na pasta (5 XML + 3 PDF)");
+                Checar(File.Exists(Armazenamento.CaminhoPdf(nfse[0])) && Armazenamento.CaminhoPdf(nfse[0]).Contains(Path.Combine("pdf", "nfse", "2026-10")), "PDF guardado em dados\\pdf");
+
+                // 2ª vez: os PDF guardados não são baixados de novo; só tenta o que faltou.
+                int antes = srv.Pedidos.Count;
+                Checar(Exportador.PrecisaBaixarPdf(todas), "ainda falta 1 PDF");
+                r = new Exportador(cfg, cert, null) { EsperaPdfMs = 0 }.Executar(todas, Path.Combine(Armazenamento.Pasta, "salvos 2"));
+                Igual(antes + 1, srv.Pedidos.Count, "só pediu o PDF que faltava");
+                Igual(3, r.Pdf, "PDF guardados copiados");
+                Checar(!Exportador.PrecisaBaixarPdf(new[] { nfse[0], nfse[2], dup }), "com PDF guardado não precisa de certificado");
+
+                // Sem certificado: XML saem, PDF guardados também, nenhum pedido ao ADN.
+                antes = srv.Pedidos.Count;
+                r = new Exportador(cfg, null, null).Executar(todas, Path.Combine(Armazenamento.Pasta, "salvos 3"));
+                Checar(r.Xml == 5 && r.Pdf == 3 && r.PdfFaltando == 1 && r.SemCertificado, "sem certificado: só o que já estava guardado");
+                Igual(antes, srv.Pedidos.Count, "sem certificado não chama o ADN");
+                Checar(r.Resumo().Contains("sem o certificado"), "resumo explica a falta do certificado");
+
+                // ADN devolve página de erro em vez de PDF: não grava, e desiste depois de 3 seguidas.
+                var novas = new List<Nota>();
+                for (int i = 1; i <= 5; i++)
+                {
+                    string ch = Amostras.ChaveNfse(500 + i);
+                    string xml = Amostras.Nfse(ch, (900 + i).ToString(), Amostras.CnpjPrefeitura, 10m, 1m);
+                    repo.GravarNota(LeitorXml.LerNfse(xml, "NFSE", ch, (20 + i).ToString()).Nota, xml);
+                    novas.Add(repo.Buscar("nfse", ch));
+                }
+                modo = "html";
+                antes = srv.Pedidos.Count;
+                r = new Exportador(cfg, cert, null) { EsperaPdfMs = 0 }.Executar(novas, Path.Combine(Armazenamento.Pasta, "salvos 4"));
+                Igual(antes + Exportador.DesistirAposFalhas, srv.Pedidos.Count, "parou de pedir depois de 3 falhas seguidas");
+                Checar(r.DesistiuPdf && r.Xml == 5 && r.Pdf == 0 && r.PdfFaltando == 5, "XML salvos mesmo sem PDF");
+                Checar((r.MotivoPdf ?? "").Contains("não devolveu um PDF") && r.MotivoPdf.Contains("Sessão expirada"), "motivo mostra o que veio: " + r.MotivoPdf);
+                Checar(!File.Exists(Armazenamento.CaminhoPdf(novas[0])), "HTML não foi guardado como PDF");
+                Checar(r.Resumo().Contains("parou de pedir"), "resumo explica a desistência");
+
+                // Parar no meio: termina a nota atual e para.
+                Exportador ex = null;
+                ex = new Exportador(cfg, null, m => ex.Parar());
+                r = ex.Executar(novas, Path.Combine(Armazenamento.Pasta, "salvos 5"));
+                Checar(r.Parado && r.Xml == 1, "Parar interrompe depois da nota atual");
+                Checar(r.Resumo().Contains("Interrompido"), "resumo avisa a interrupção");
             }
             File.Delete(Path.Combine(Armazenamento.Pasta, "notas.json"));
         }

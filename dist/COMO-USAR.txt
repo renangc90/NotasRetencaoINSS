@@ -24,6 +24,10 @@ NO DIA A DIA
 - "Exportar para Excel" gera a planilha do que está na tela, com uma aba das
   notas e outra somada por prestador.
 - Dois cliques numa nota abrem a pasta com o XML dela.
+- "Salvar XML e PDF": salva numa pasta o XML e o PDF de cada nota da lista.
+  Para salvar só algumas, selecione as linhas antes (Ctrl ou Shift + clique).
+  O PDF da NFS-e vem do ADN (precisa de internet e do certificado). As NF-e
+  saem só com o XML: a SEFAZ não entrega o PDF.
 
 NF-E (MERCADORIA) - OPCIONAL
 Vem desligada. Para a SEFAZ entregar o XML completo de uma NF-e (onde está

@@ -15,7 +15,10 @@ namespace NotasRetencaoINSS
         Configuracao cfg;
         Repositorio repo;
         Sincronizador sincronizando;
+        Exportador exportando;
         List<Nota> filtradas = new List<Nota>();
+
+        bool Ocupado { get { return sincronizando != null || exportando != null; } }
 
         readonly Label lbEntidade = new Label { AutoSize = true, Font = new Font("Segoe UI", 10F, FontStyle.Bold), Margin = new Padding(3, 6, 12, 3) };
         readonly Button btConfig = new Button { Text = "Configurações", AutoSize = true };
@@ -28,6 +31,8 @@ namespace NotasRetencaoINSS
         readonly Button btBaixar = new Button { Text = "Baixar notas novas", AutoSize = true, Padding = new Padding(8, 2, 8, 2) };
         readonly Button btParar = new Button { Text = "Parar", AutoSize = true, Visible = false };
         readonly Button btExcel = new Button { Text = "Exportar para Excel", AutoSize = true, Padding = new Padding(8, 2, 8, 2) };
+        readonly Button btArquivos = new Button { Text = "Salvar XML e PDF", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(8, 2, 8, 2) };
+        readonly ToolTip dica = new ToolTip();
         readonly DataGridView grade = new DataGridView();
         readonly Label lbTotais = new Label { AutoSize = true, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), Margin = new Padding(3, 4, 3, 0) };
         readonly Label lbStatus = new Label { AutoSize = true, ForeColor = SystemColors.GrayText, MaximumSize = new Size(1400, 0), Margin = new Padding(3, 2, 3, 4) };
@@ -52,7 +57,8 @@ namespace NotasRetencaoINSS
             filtros.Controls.AddRange(new Control[] { Rotulo("Emissão de"), dtDe, Rotulo("até"), dtAte, Rotulo("   Buscar:"), txBusca, Espaco(), rbComInss, rbTodas, ckCanceladas });
 
             var acoes = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = false, Padding = new Padding(8, 2, 8, 6) };
-            acoes.Controls.AddRange(new Control[] { btBaixar, btParar, btExcel });
+            acoes.Controls.AddRange(new Control[] { btBaixar, btParar, btExcel, btArquivos });
+            dica.SetToolTip(btArquivos, "Salva numa pasta o XML e o PDF das notas da lista.\nPara salvar só algumas, selecione as linhas antes (Ctrl ou Shift + clique).");
 
             var rodape = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(8, 0, 8, 4) };
             rodape.Controls.Add(lbTotais);
@@ -79,14 +85,25 @@ namespace NotasRetencaoINSS
             adiarFiltro.Tick += (s, e) => { adiarFiltro.Stop(); Filtrar(); };
             btConfig.Click += (s, e) => AbrirConfiguracao();
             btBaixar.Click += (s, e) => Baixar();
-            btParar.Click += (s, e) => { if (sincronizando != null) { sincronizando.Parar(); btParar.Enabled = false; btParar.Text = "Parando…"; } };
+            btParar.Click += (s, e) =>
+            {
+                if (sincronizando != null) sincronizando.Parar();
+                else if (exportando != null) exportando.Parar();
+                else return;
+                btParar.Enabled = false;
+                btParar.Text = "Parando…";
+            };
             btExcel.Click += (s, e) => Exportar();
+            btArquivos.Click += (s, e) => SalvarArquivos();
             grade.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) AbrirXml(e.RowIndex); };
+            grade.SelectionChanged += (s, e) => AtualizarBotaoArquivos();
             FormClosing += (s, e) =>
             {
-                if (sincronizando == null) return;
-                if (MessageBox.Show(this, "A busca ainda está em andamento. Parar e fechar?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) e.Cancel = true;
-                else sincronizando.Parar();
+                if (!Ocupado) return;
+                string oQue = sincronizando != null ? "A busca" : "A gravação dos arquivos";
+                if (MessageBox.Show(this, oQue + " ainda está em andamento. Parar e fechar?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) e.Cancel = true;
+                else if (sincronizando != null) sincronizando.Parar();
+                else exportando.Parar();
             };
             Shown += (s, e) => Iniciar();
         }
@@ -100,6 +117,9 @@ namespace NotasRetencaoINSS
             grade.ReadOnly = true;
             grade.AllowUserToAddRows = grade.AllowUserToDeleteRows = grade.AllowUserToResizeRows = false;
             grade.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            grade.MultiSelect = true;
+            // Sem seleção = "Salvar XML e PDF" pega a lista toda; a grade marcaria a 1ª linha sozinha.
+            grade.DataBindingComplete += (s, e) => { grade.ClearSelection(); AtualizarBotaoArquivos(); };
             grade.RowHeadersVisible = false;
             grade.BackgroundColor = SystemColors.Window;
             grade.BorderStyle = BorderStyle.None;
@@ -218,7 +238,22 @@ namespace NotasRetencaoINSS
             lbTotais.Text = ativas.Count + (ativas.Count == 1 ? " nota" : " notas") + " · Valor " + Formatos.Dinheiro(ativas.Sum(n => n.Valor))
                 + " · INSS retido " + Formatos.Dinheiro(ativas.Sum(n => n.InssRetido))
                 + (filtradas.Count > ativas.Count ? "   (canceladas fora da soma)" : "");
-            btExcel.Enabled = filtradas.Count > 0 && sincronizando == null;
+            btExcel.Enabled = filtradas.Count > 0 && !Ocupado;
+            AtualizarBotaoArquivos();
+        }
+
+        /// <summary>Linhas selecionadas (na ordem da tela) ou, sem seleção, a lista toda.</summary>
+        List<Nota> NotasParaSalvar()
+        {
+            if (grade.SelectedRows.Count == 0) return filtradas.ToList();
+            return grade.SelectedRows.Cast<DataGridViewRow>().OrderBy(r => r.Index).Select(r => NotaDaLinha(r.Index)).ToList();
+        }
+
+        void AtualizarBotaoArquivos()
+        {
+            int sel = grade.SelectedRows.Count;
+            btArquivos.Text = sel > 0 ? "Salvar XML e PDF (" + sel + (sel == 1 ? " selecionada)" : " selecionadas)") : "Salvar XML e PDF";
+            btArquivos.Enabled = filtradas.Count > 0 && !Ocupado;
         }
 
         Nota NotaDaLinha(int linha)
@@ -242,7 +277,7 @@ namespace NotasRetencaoINSS
 
         void AbrirConfiguracao()
         {
-            if (sincronizando != null) return;
+            if (Ocupado) return;
             using (var t = new TelaConfiguracao(cfg))
                 if (t.ShowDialog(this) == DialogResult.OK) { AtualizarCabecalho(); Filtrar(); }
         }
@@ -255,7 +290,7 @@ namespace NotasRetencaoINSS
             catch (ErroAviso ex) { MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
 
             sincronizando = new Sincronizador(cfg, repo, cert, msg => BeginInvoke((Action)(() => lbStatus.Text = msg)));
-            btBaixar.Enabled = btConfig.Enabled = btExcel.Enabled = false;
+            btBaixar.Enabled = btConfig.Enabled = btExcel.Enabled = btArquivos.Enabled = false;
             btParar.Visible = btParar.Enabled = true;
             btParar.Text = "Parar";
             Cursor = Cursors.AppStarting;
@@ -284,6 +319,78 @@ namespace NotasRetencaoINSS
                 MessageBox.Show(this, "A busca parou por um erro inesperado:\n" + erro.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
             else if (res.Avisos.Count > 0)
                 MessageBox.Show(this, res.Resumo() + "\n\n" + string.Join("\n\n", res.Avisos), Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        void SalvarArquivos()
+        {
+            if (Ocupado) return;
+            List<Nota> notas = NotasParaSalvar();
+            if (notas.Count == 0) return;
+
+            string pasta;
+            using (var dlg = new FolderBrowserDialog
+            {
+                Description = "Onde salvar o XML e o PDF " + (notas.Count == 1 ? "da nota selecionada" : "das " + notas.Count + " notas") + "?",
+                ShowNewFolderButton = true,
+                SelectedPath = !string.IsNullOrEmpty(cfg.PastaArquivos) && Directory.Exists(cfg.PastaArquivos)
+                    ? cfg.PastaArquivos : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            })
+            {
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                pasta = dlg.SelectedPath;
+            }
+
+            // O certificado só é preciso para buscar no ADN o PDF que ainda não está guardado.
+            CertificadoInfo cert = null;
+            if (Exportador.PrecisaBaixarPdf(notas))
+            {
+                try { cert = Certificados.Carregar(cfg); }
+                catch (ErroAviso ex)
+                {
+                    if (MessageBox.Show(this, ex.Message + "\n\nSem o certificado o programa não busca o PDF no ADN. Salvar só os XML?", Text,
+                            MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+                }
+            }
+
+            cfg.PastaArquivos = pasta;
+            try { Armazenamento.SalvarConfiguracao(cfg); } catch (Exception) { }
+
+            exportando = new Exportador(cfg, cert, msg => BeginInvoke((Action)(() => lbStatus.Text = msg)));
+            btBaixar.Enabled = btConfig.Enabled = btExcel.Enabled = btArquivos.Enabled = false;
+            btParar.Visible = btParar.Enabled = true;
+            btParar.Text = "Parar";
+            Cursor = Cursors.AppStarting;
+            lbStatus.Text = "Salvando os arquivos das notas…";
+
+            Exportador e = exportando;
+            var trabalho = new Thread(() =>
+            {
+                ResultadoExportacao res = null;
+                Exception erro = null;
+                try { res = e.Executar(notas, pasta); }
+                catch (Exception ex) { erro = ex; }
+                BeginInvoke((Action)(() => TerminouSalvar(res, erro, pasta)));
+            }) { IsBackground = true };
+            trabalho.Start();
+        }
+
+        void TerminouSalvar(ResultadoExportacao res, Exception erro, string pasta)
+        {
+            exportando = null;
+            btBaixar.Enabled = btConfig.Enabled = true;
+            btParar.Visible = false;
+            Cursor = Cursors.Default;
+            AtualizarCabecalho();
+            Filtrar();
+            if (erro != null)
+            {
+                MessageBox.Show(this, erro is ErroAviso ? erro.Message : "A gravação parou por um erro inesperado:\n" + erro.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            bool tudo = res.PdfFaltando == 0 && res.SemXml == 0 && !res.Parado;
+            if (MessageBox.Show(this, res.Resumo() + "\n\nAbrir a pasta agora?", Text, MessageBoxButtons.YesNo,
+                    tudo ? MessageBoxIcon.Information : MessageBoxIcon.Warning) == DialogResult.Yes)
+                try { Process.Start("explorer.exe", "\"" + pasta + "\""); } catch (Exception) { }
         }
 
         void Exportar()
