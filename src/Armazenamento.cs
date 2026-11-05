@@ -120,7 +120,34 @@ namespace NotasRetencaoINSS
             BaseNotas b = Ler<BaseNotas>(Path.Combine(Pasta, "notas.json"));
             if (b.Notas == null) b.Notas = new List<Nota>();
             if (b.Eventos == null) b.Eventos = new List<EventoNota>();
+            if (b.Versao < BaseNotas.VersaoAtual)
+            {
+                CompletarDoXml(b);
+                b.Versao = BaseNotas.VersaoAtual;
+                if (b.Notas.Count > 0) SalvarNotas(b);
+            }
             return b;
+        }
+
+        /// <summary>Versão 1 → 2: IR, CSLL/PIS/COFINS e Simples saem dos XML já guardados, sem baixar de novo.</summary>
+        static void CompletarDoXml(BaseNotas b)
+        {
+            foreach (Nota n in b.Notas)
+            {
+                if (string.IsNullOrEmpty(n.ArquivoXml)) continue;
+                string caminho = CaminhoCompleto(n.ArquivoXml);
+                if (!File.Exists(caminho)) continue;
+                try
+                {
+                    string xml = File.ReadAllText(caminho, Encoding.UTF8);
+                    Lido l = n.Tipo == "nfse" ? LeitorXml.LerNfse(xml, "NFSE", n.Chave, n.Nsu) : LeitorXml.LerNfe(xml, "procNFe", n.Nsu);
+                    if (l == null || l.Nota == null) continue;
+                    n.IrRetido = l.Nota.IrRetido;
+                    n.CsrfRetida = l.Nota.CsrfRetida;
+                    n.SimplesNacional = l.Nota.SimplesNacional;
+                }
+                catch (Exception) { }   // XML ilegível: a nota fica sem IR, como antes
+            }
         }
 
         public static void SalvarNotas(BaseNotas b)
@@ -168,11 +195,15 @@ namespace NotasRetencaoINSS
         readonly Dictionary<string, Nota> porChave = new Dictionary<string, Nota>();
         readonly HashSet<string> chavesCanceladas = new HashSet<string>();
         readonly HashSet<string> eventosVistos = new HashSet<string>();
+        // Última natureza escolhida na tela para cada prestador: vira a sugestão das outras notas dele.
+        readonly Dictionary<string, string> naturezaPorPrestador = new Dictionary<string, string>();
 
         public Repositorio(BaseNotas b)
         {
             Base = b;
             foreach (Nota n in b.Notas) porChave[n.Tipo + ":" + n.Chave] = n;
+            foreach (Nota n in b.Notas.Where(x => !string.IsNullOrEmpty(x.Natureza)).OrderBy(x => x.Emissao ?? ""))
+                naturezaPorPrestador[ChavePrestador(n)] = n.Natureza;
             foreach (EventoNota e in b.Eventos)
             {
                 eventosVistos.Add(IdEvento(e));
@@ -194,6 +225,31 @@ namespace NotasRetencaoINSS
         public bool Cancelada(Nota n)
         {
             return n.Situacao == "cancelada" || chavesCanceladas.Contains(n.Tipo + ":" + n.Chave);
+        }
+
+        static string ChavePrestador(Nota n)
+        {
+            return n.Tipo + ":" + (n.EmitenteDoc ?? "");
+        }
+
+        /// <summary>Natureza de rendimento da nota: a escolhida nela, senão a do mesmo prestador, senão a sugerida pela nota.</summary>
+        public string Natureza(Nota n)
+        {
+            if (!string.IsNullOrEmpty(n.Natureza)) return n.Natureza;
+            string doPrestador;
+            if (!string.IsNullOrEmpty(n.EmitenteDoc) && naturezaPorPrestador.TryGetValue(ChavePrestador(n), out doPrestador)) return doPrestador;
+            return TabelaReinf.Sugerir(n);
+        }
+
+        public bool NaturezaEscolhida(Nota n)
+        {
+            return !string.IsNullOrEmpty(n.Natureza);
+        }
+
+        public void DefinirNatureza(Nota n, string codigo)
+        {
+            n.Natureza = codigo;
+            if (!string.IsNullOrEmpty(n.EmitenteDoc)) naturezaPorPrestador[ChavePrestador(n)] = codigo;
         }
 
         /// <summary>
@@ -228,6 +284,7 @@ namespace NotasRetencaoINSS
             nova.CienciaEm = atual.CienciaEm;
             nova.CienciaOk = atual.CienciaOk;
             nova.CienciaRetorno = atual.CienciaRetorno;
+            nova.Natureza = atual.Natureza;
             if (atual.Situacao == "cancelada") nova.Situacao = "cancelada";
             Base.Notas[Base.Notas.IndexOf(atual)] = nova;
             porChave[nova.Tipo + ":" + nova.Chave] = nova;

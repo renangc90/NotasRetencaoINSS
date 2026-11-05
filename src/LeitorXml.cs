@@ -115,6 +115,7 @@ namespace NotasRetencaoINSS
             if (prestDoc == "") prestDoc = emitDoc;
 
             string dhProc = TextoFilho(inf, "dhProc");
+            XmlElement tribFed = No(infDps, "tribFed");
             var n = new Nota
             {
                 Tipo = "nfse",
@@ -130,7 +131,10 @@ namespace NotasRetencaoINSS
                 TomadorDoc = Documento(toma),
                 TomadorNome = TextoFilho(toma, "xNome"),
                 Valor = Formatos.Numero(Texto(No(infDps, "vServPrest"), "vServ")),
-                InssRetido = Formatos.Numero(Texto(No(infDps, "tribFed"), "vRetCP")),
+                InssRetido = Formatos.Numero(Texto(tribFed, "vRetCP")),
+                IrRetido = Formatos.Numero(Texto(tribFed, "vRetIRRF")),
+                CsrfRetida = CsrfNfse(tribFed),
+                SimplesNacional = SimplesNfse(Texto(Filho(prest, "regTrib"), "opSimpNac")),
                 CodigoServico = Texto(No(infDps, "cServ"), "cTribNac"),
                 Descricao = Texto(No(infDps, "cServ"), "xDescServ"),
                 Municipio = TextoFilho(inf, "xLocPrestacao") != "" ? TextoFilho(inf, "xLocPrestacao") : TextoFilho(inf, "xLocEmi"),
@@ -138,6 +142,38 @@ namespace NotasRetencaoINSS
             };
             if (n.Valor == 0m) n.Valor = Formatos.Numero(Texto(Filho(inf, "valores"), "vLiq"));
             return new Lido { Nota = n };
+        }
+
+        /// <summary>
+        /// CSLL + PIS + COFINS retidos. Leiaute original: vRetCSLL é só a CSLL, e PIS/COFINS foram retidos quando
+        /// tpRetPisCofins = 1 (vPis/vCofins aparecem também sem retenção). NT 007/2026 (códigos 0 e 3 a 9):
+        /// vRetCSLL passa a ser a soma de PIS, COFINS e CSLL retidos. Público para os testes.
+        /// </summary>
+        public static decimal CsrfNfse(XmlElement tribFed)
+        {
+            if (tribFed == null) return 0m;
+            decimal vRetCsll = Formatos.Numero(Texto(tribFed, "vRetCSLL"));
+            XmlElement pisCofins = No(tribFed, "piscofins");
+            string tp = Texto(pisCofins, "tpRetPisCofins");
+            if (tp == "0") return 0m;
+            if (tp == "1") return vRetCsll + Formatos.Numero(Texto(pisCofins, "vPis")) + Formatos.Numero(Texto(pisCofins, "vCofins"));
+            return vRetCsll;   // 2 (PIS/COFINS não retidos), 3 a 9 (vRetCSLL já é o total) ou sem o grupo piscofins
+        }
+
+        static string SimplesNfse(string opSimpNac)
+        {
+            if (opSimpNac == "1") return "Não";
+            if (opSimpNac == "2") return "MEI";
+            if (opSimpNac == "3") return "Sim";
+            return "";
+        }
+
+        static string SimplesNfe(string crt)
+        {
+            if (crt == "1" || crt == "2") return "Sim";
+            if (crt == "3") return "Não";
+            if (crt == "4") return "MEI";
+            return "";
         }
 
         static EventoNota LerEventoNfse(XmlDocument doc, string chaveAcesso, string nsu)
@@ -241,6 +277,9 @@ namespace NotasRetencaoINSS
                 Valor = Formatos.Numero(Texto(Filho(total, "ICMSTot"), "vNF")),
                 BaseInss = vBcPrev == "" ? (decimal?)null : Formatos.Numero(vBcPrev),
                 InssRetido = Formatos.Numero(TextoFilho(retTrib, "vRetPrev")),
+                IrRetido = Formatos.Numero(TextoFilho(retTrib, "vIRRF")),
+                CsrfRetida = Formatos.Numero(TextoFilho(retTrib, "vRetCSLL")) + Formatos.Numero(TextoFilho(retTrib, "vRetPIS")) + Formatos.Numero(TextoFilho(retTrib, "vRetCOFINS")),
+                SimplesNacional = SimplesNfe(TextoFilho(emit, "CRT")),
                 Descricao = descricao,
                 Municipio = Texto(Filho(emit, "enderEmit"), "xMun"),
                 Situacao = (cStatProt == "110" || cStatProt == "301" || cStatProt == "302" || cStatProt == "303") ? "denegada" : "autorizada",

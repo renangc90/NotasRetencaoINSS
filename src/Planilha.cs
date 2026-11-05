@@ -8,7 +8,10 @@ using System.Text;
 
 namespace NotasRetencaoINSS
 {
-    /// <summary>Gera .xlsx de verdade (sem Excel instalado): aba das notas e aba somada por prestador.</summary>
+    /// <summary>
+    /// Gera .xlsx de verdade (sem Excel instalado): aba das notas, aba somada por prestador e aba
+    /// das retenções de IR/CSLL/PIS/COFINS por prestador e natureza (conferência da EFD-Reinf).
+    /// </summary>
     public static class Planilha
     {
         // Estilos (styles.xml): 0 normal, 1 cabeçalho, 2 dinheiro, 3 data, 4 total dinheiro, 5 total texto, 6 título
@@ -31,55 +34,98 @@ namespace NotasRetencaoINSS
             return d.HasValue ? new Celula { Data = d, Estilo = SData } : T("");
         }
 
-        public static void Gerar(string caminho, string titulo, IList<Nota> notas, Func<Nota, bool> cancelada)
+        // Colunas da aba Notas (os totais usam estas posições).
+        const int CValor = 10, CInss = 12, CIr = 13, CCsrf = 14, CSituacao = 20, UltimaColuna = 21;
+
+        /// <param name="natureza">natureza de rendimento de cada nota (Repositorio.Natureza)</param>
+        /// <param name="classTrib85">declarante da administração pública direta, autarquia ou fundação (coluna "Sim" do Anexo I)</param>
+        public static void Gerar(string caminho, string titulo, IList<Nota> notas, Func<Nota, bool> cancelada, Func<Nota, string> natureza, bool classTrib85)
         {
             var linhasNotas = new List<List<Celula>>();
             linhasNotas.Add(new List<Celula> { T(titulo, STitulo) });
             linhasNotas.Add(new List<Celula>());
             string[] cab = { "Tipo", "Número", "Série", "Emissão", "Competência", "Prestador / Emitente", "CNPJ/CPF", "Município",
-                             "Código do serviço", "Descrição", "Valor da nota", "Base INSS (NF-e)", "INSS retido", "Situação", "Chave de acesso" };
+                             "Código do serviço", "Descrição", "Valor da nota", "Base INSS (NF-e)", "INSS retido", "IR retido",
+                             "CSLL/PIS/COFINS retidos", "Natureza do rendimento", "Descrição da natureza", "Código de receita IR",
+                             "Códigos CSLL/PIS/COFINS", "Simples Nacional", "Situação", "Chave de acesso" };
             linhasNotas.Add(cab.Select(c => T(c, SCabecalho)).ToList());
             int primeira = linhasNotas.Count + 1;
             foreach (Nota n in notas)
             {
                 bool canc = cancelada(n);
+                string nat = natureza(n);
+                NaturezaRendimento nr = TabelaReinf.Buscar(nat);
                 linhasNotas.Add(new List<Celula>
                 {
                     T(n.Tipo == "nfse" ? "NFS-e" : "NF-e"), T(n.Numero), T(n.Serie), D(n.Emissao), D(n.Competencia),
                     T(n.EmitenteNome), T(Formatos.CnpjCpf(n.EmitenteDoc)), T(n.Municipio), T(n.CodigoServico), T(n.Descricao),
-                    N(n.Valor), N(n.BaseInss), N(n.InssRetido), T(canc ? "Cancelada" : SituacaoTexto(n)), T(n.Chave),
+                    N(n.Valor), N(n.BaseInss), N(n.InssRetido), N(n.IrRetido), N(n.CsrfRetida),
+                    T(nat), T(nr == null ? "" : nr.Descricao),
+                    T(n.IrRetido > 0 ? CodigoIrOuAviso(nat, classTrib85) : ""),
+                    T(n.CsrfRetida > 0 ? TabelaReinf.CodigosCsrf(nat, classTrib85) : ""),
+                    T(n.SimplesNacional), T(canc ? "Cancelada" : SituacaoTexto(n)), T(n.Chave),
                 });
             }
             int ultima = linhasNotas.Count;
             var ativas = notas.Where(n => !cancelada(n)).ToList();
-            linhasNotas.Add(new List<Celula>
-            {
-                T("Total (sem canceladas)", STotalTexto), T(""), T(""), T(""), T(""), T(""), T(""), T(""), T(""), T(""),
-                new Celula { Formula = ultima >= primeira ? "SUMIF(N" + primeira + ":N" + ultima + ",\"<>Cancelada\",K" + primeira + ":K" + ultima + ")" : null, Numero = ativas.Sum(n => n.Valor), Estilo = STotalDinheiro },
-                T(""),
-                new Celula { Formula = ultima >= primeira ? "SUMIF(N" + primeira + ":N" + ultima + ",\"<>Cancelada\",M" + primeira + ":M" + ultima + ")" : null, Numero = ativas.Sum(n => n.InssRetido), Estilo = STotalDinheiro },
-            });
+            var total = new List<Celula> { T("Total (sem canceladas)", STotalTexto) };
+            while (total.Count < CValor) total.Add(T(""));
+            total.Add(Soma(primeira, ultima, CValor, ativas.Sum(n => n.Valor)));
+            total.Add(T(""));
+            total.Add(Soma(primeira, ultima, CInss, ativas.Sum(n => n.InssRetido)));
+            total.Add(Soma(primeira, ultima, CIr, ativas.Sum(n => n.IrRetido)));
+            total.Add(Soma(primeira, ultima, CCsrf, ativas.Sum(n => n.CsrfRetida)));
+            linhasNotas.Add(total);
 
             var linhasPrest = new List<List<Celula>>();
             linhasPrest.Add(new List<Celula> { T(titulo + " — somado por prestador (sem canceladas)", STitulo) });
             linhasPrest.Add(new List<Celula>());
-            linhasPrest.Add(new[] { "CNPJ/CPF", "Prestador / Emitente", "Notas", "Valor das notas", "INSS retido" }.Select(c => T(c, SCabecalho)).ToList());
+            linhasPrest.Add(new[] { "CNPJ/CPF", "Prestador / Emitente", "Notas", "Valor das notas", "INSS retido", "IR retido" }.Select(c => T(c, SCabecalho)).ToList());
             foreach (var g in ativas.GroupBy(n => n.EmitenteDoc ?? "").OrderBy(g => g.First().EmitenteNome))
             {
                 linhasPrest.Add(new List<Celula>
                 {
                     T(Formatos.CnpjCpf(g.Key)), T(g.First().EmitenteNome), new Celula { Numero = g.Count() },
-                    N(g.Sum(n => n.Valor)), N(g.Sum(n => n.InssRetido)),
+                    N(g.Sum(n => n.Valor)), N(g.Sum(n => n.InssRetido)), N(g.Sum(n => n.IrRetido)),
                 });
             }
             linhasPrest.Add(new List<Celula>
             {
                 T("Total", STotalTexto), T(""), new Celula { Numero = ativas.Count, Estilo = STotalTexto },
-                N(ativas.Sum(n => n.Valor), STotalDinheiro), N(ativas.Sum(n => n.InssRetido), STotalDinheiro),
+                N(ativas.Sum(n => n.Valor), STotalDinheiro), N(ativas.Sum(n => n.InssRetido), STotalDinheiro), N(ativas.Sum(n => n.IrRetido), STotalDinheiro),
             });
 
-            double[] largNotas = { 8, 11, 7, 11, 12, 42, 20, 20, 14, 45, 15, 15, 14, 12, 50 };
-            double[] largPrest = { 20, 50, 8, 18, 16 };
+            // EFD-Reinf: só notas com IR ou CSLL/PIS/COFINS retidos, por prestador e natureza.
+            var linhasReinf = new List<List<Celula>>();
+            linhasReinf.Add(new List<Celula> { T(titulo + " — retenções de IR e CSLL/PIS/COFINS por prestador e natureza (sem canceladas)", STitulo) });
+            linhasReinf.Add(new List<Celula> { T("Para conferir a EFD-Reinf (R-4020: pessoa jurídica; R-4010: pessoa física). Códigos do " + TabelaReinf.Fonte
+                + (classTrib85 ? ", coluna da administração pública (classificação 85)" : ", coluna das demais entidades") + ". A data do pagamento não vem na nota: confira antes de lançar.") });
+            linhasReinf.Add(new[] { "Evento", "CNPJ/CPF", "Prestador", "Natureza", "Descrição da natureza", "Notas", "Valor bruto", "IR retido",
+                                    "Código de receita IR", "CSLL/PIS/COFINS retidos", "Códigos CSLL/PIS/COFINS" }.Select(c => T(c, SCabecalho)).ToList());
+            var comRetencao = ativas.Where(n => n.IrRetido > 0 || n.CsrfRetida > 0).ToList();
+            foreach (var g in comRetencao.GroupBy(n => new { Doc = n.EmitenteDoc ?? "", Nat = natureza(n) })
+                                         .OrderBy(g => g.First().EmitenteNome).ThenBy(g => g.Key.Nat))
+            {
+                NaturezaRendimento nr = TabelaReinf.Buscar(g.Key.Nat);
+                decimal ir = g.Sum(n => n.IrRetido), csrf = g.Sum(n => n.CsrfRetida);
+                linhasReinf.Add(new List<Celula>
+                {
+                    T(nr == null ? "" : nr.Evento), T(Formatos.CnpjCpf(g.Key.Doc)), T(g.First().EmitenteNome), T(g.Key.Nat), T(nr == null ? "" : nr.Descricao),
+                    new Celula { Numero = g.Count() }, N(g.Sum(n => n.Valor)), N(ir), T(ir > 0 ? CodigoIrOuAviso(g.Key.Nat, classTrib85) : ""),
+                    N(csrf), T(csrf > 0 ? TabelaReinf.CodigosCsrf(g.Key.Nat, classTrib85) : ""),
+                });
+            }
+            linhasReinf.Add(new List<Celula>
+            {
+                T("Total", STotalTexto), T(""), T(""), T(""), T(""), new Celula { Numero = comRetencao.Count, Estilo = STotalTexto },
+                N(comRetencao.Sum(n => n.Valor), STotalDinheiro), N(comRetencao.Sum(n => n.IrRetido), STotalDinheiro), T(""),
+                N(comRetencao.Sum(n => n.CsrfRetida), STotalDinheiro),
+            });
+
+            double[] largNotas = { 8, 11, 7, 11, 12, 42, 20, 20, 14, 45, 15, 15, 14, 14, 16, 12, 45, 14, 34, 10, 12, 50 };
+            double[] largPrest = { 20, 50, 8, 18, 16, 16 };
+            double[] largReinf = { 9, 20, 45, 10, 50, 8, 16, 14, 14, 16, 34 };
+            string colFiltro = Coluna(UltimaColuna);
 
             if (File.Exists(caminho)) File.Delete(caminho);
             using (var zip = ZipFile.Open(caminho, ZipArchiveMode.Create))
@@ -90,20 +136,22 @@ namespace NotasRetencaoINSS
                     + "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>"
                     + "<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
                     + "<Override PartName=\"/xl/worksheets/sheet2.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
+                    + "<Override PartName=\"/xl/worksheets/sheet3.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
                     + "<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/></Types>");
                 Escrever(zip, "_rels/.rels",
                     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
                     + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>");
                 Escrever(zip, "xl/workbook.xml",
                     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
-                    + "<sheets><sheet name=\"Notas\" sheetId=\"1\" r:id=\"rId1\"/><sheet name=\"Por prestador\" sheetId=\"2\" r:id=\"rId2\"/></sheets>"
-                    + "<definedNames><definedName name=\"_xlnm._FilterDatabase\" localSheetId=\"0\" hidden=\"1\">Notas!$A$3:$O$" + Math.Max(3, ultima) + "</definedName></definedNames>"
+                    + "<sheets><sheet name=\"Notas\" sheetId=\"1\" r:id=\"rId1\"/><sheet name=\"Por prestador\" sheetId=\"2\" r:id=\"rId2\"/><sheet name=\"EFD-Reinf\" sheetId=\"3\" r:id=\"rId4\"/></sheets>"
+                    + "<definedNames><definedName name=\"_xlnm._FilterDatabase\" localSheetId=\"0\" hidden=\"1\">Notas!$A$3:$" + colFiltro + "$" + Math.Max(3, ultima) + "</definedName></definedNames>"
                     + "<calcPr fullCalcOnLoad=\"1\"/></workbook>");
                 Escrever(zip, "xl/_rels/workbook.xml.rels",
                     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
                     + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>"
                     + "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet2.xml\"/>"
-                    + "<Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/></Relationships>");
+                    + "<Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>"
+                    + "<Relationship Id=\"rId4\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet3.xml\"/></Relationships>");
                 Escrever(zip, "xl/styles.xml",
                     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
                     + "<numFmts count=\"1\"><numFmt numFmtId=\"164\" formatCode=\"dd/mm/yyyy\"/></numFmts>"
@@ -120,9 +168,28 @@ namespace NotasRetencaoINSS
                     + "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"1\" xfId=\"0\" applyFont=\"1\" applyBorder=\"1\"/>"
                     + "<xf numFmtId=\"0\" fontId=\"2\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyFont=\"1\"/>"
                     + "</cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles></styleSheet>");
-                Escrever(zip, "xl/worksheets/sheet1.xml", Aba(linhasNotas, largNotas, "A3:O" + Math.Max(3, ultima)));
+                Escrever(zip, "xl/worksheets/sheet1.xml", Aba(linhasNotas, largNotas, "A3:" + colFiltro + Math.Max(3, ultima)));
                 Escrever(zip, "xl/worksheets/sheet2.xml", Aba(linhasPrest, largPrest, null));
+                Escrever(zip, "xl/worksheets/sheet3.xml", Aba(linhasReinf, largReinf, null));
             }
+        }
+
+        /// <summary>SUMIF que ignora as canceladas (coluna Situação), com o valor já calculado para quem abre sem recalcular.</summary>
+        static Celula Soma(int primeira, int ultima, int coluna, decimal valor)
+        {
+            string s = Coluna(CSituacao), c = Coluna(coluna);
+            return new Celula
+            {
+                Formula = ultima >= primeira ? "SUMIF(" + s + primeira + ":" + s + ultima + ",\"<>Cancelada\"," + c + primeira + ":" + c + ultima + ")" : null,
+                Numero = valor,
+                Estilo = STotalDinheiro,
+            };
+        }
+
+        static string CodigoIrOuAviso(string natureza, bool classTrib85)
+        {
+            string c = TabelaReinf.CodigoIr(natureza, classTrib85);
+            return c != "" ? c : "sem código no Anexo I";
         }
 
         public static string SituacaoTexto(Nota n)

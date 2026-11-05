@@ -26,6 +26,7 @@ namespace NotasRetencaoINSS
         readonly DateTimePicker dtAte = new DateTimePicker { Format = DateTimePickerFormat.Short, Width = 110 };
         readonly TextBox txBusca = new TextBox { Width = 230 };
         readonly RadioButton rbComInss = new RadioButton { Text = "Só com INSS retido", AutoSize = true, Checked = true };
+        readonly RadioButton rbComIr = new RadioButton { Text = "Só com IR retido", AutoSize = true };
         readonly RadioButton rbTodas = new RadioButton { Text = "Todas as notas recebidas", AutoSize = true };
         readonly CheckBox ckCanceladas = new CheckBox { Text = "Mostrar canceladas", AutoSize = true };
         readonly Button btBaixar = new Button { Text = "Baixar notas novas", AutoSize = true, Padding = new Padding(8, 2, 8, 2) };
@@ -37,6 +38,8 @@ namespace NotasRetencaoINSS
         readonly Label lbTotais = new Label { AutoSize = true, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), Margin = new Padding(3, 4, 3, 0) };
         readonly Label lbStatus = new Label { AutoSize = true, ForeColor = SystemColors.GrayText, MaximumSize = new Size(1400, 0), Margin = new Padding(3, 2, 3, 4) };
         readonly System.Windows.Forms.Timer adiarFiltro = new System.Windows.Forms.Timer { Interval = 300 };
+        readonly Font fonteSugerida = new Font("Segoe UI", 9F, FontStyle.Italic);
+        bool atualizandoNaturezas;
 
         public TelaPrincipal()
         {
@@ -44,7 +47,7 @@ namespace NotasRetencaoINSS
             Font = new Font("Segoe UI", 9F);
             AutoScaleMode = AutoScaleMode.Dpi;
             AutoScaleDimensions = new SizeF(96F, 96F);
-            Size = new Size(1180, 680);
+            Size = new Size(1320, 700);
             MinimumSize = new Size(900, 480);
             StartPosition = FormStartPosition.CenterScreen;
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { }
@@ -54,7 +57,7 @@ namespace NotasRetencaoINSS
             topo.Controls.Add(btConfig);
 
             var filtros = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true, Padding = new Padding(8, 4, 8, 0) };
-            filtros.Controls.AddRange(new Control[] { Rotulo("Emissão de"), dtDe, Rotulo("até"), dtAte, Rotulo("   Buscar:"), txBusca, Espaco(), rbComInss, rbTodas, ckCanceladas });
+            filtros.Controls.AddRange(new Control[] { Rotulo("Emissão de"), dtDe, Rotulo("até"), dtAte, Rotulo("   Buscar:"), txBusca, Espaco(), rbComInss, rbComIr, rbTodas, ckCanceladas });
 
             var acoes = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = false, Padding = new Padding(8, 2, 8, 6) };
             acoes.Controls.AddRange(new Control[] { btBaixar, btParar, btExcel, btArquivos });
@@ -79,7 +82,10 @@ namespace NotasRetencaoINSS
             EventHandler filtrar = (s, e) => Filtrar();
             dtDe.ValueChanged += filtrar;
             dtAte.ValueChanged += filtrar;
-            rbComInss.CheckedChanged += filtrar;
+            EventHandler opcao = (s, e) => { if (((RadioButton)s).Checked) Filtrar(); };
+            rbComInss.CheckedChanged += opcao;
+            rbComIr.CheckedChanged += opcao;
+            rbTodas.CheckedChanged += opcao;
             ckCanceladas.CheckedChanged += filtrar;
             txBusca.TextChanged += (s, e) => { adiarFiltro.Stop(); adiarFiltro.Start(); };
             adiarFiltro.Tick += (s, e) => { adiarFiltro.Stop(); Filtrar(); };
@@ -114,7 +120,7 @@ namespace NotasRetencaoINSS
         void ConfigurarGrade()
         {
             grade.Dock = DockStyle.Fill;
-            grade.ReadOnly = true;
+            grade.ReadOnly = false;   // só a coluna Natureza é editável (as outras são ReadOnly em Coluna())
             grade.AllowUserToAddRows = grade.AllowUserToDeleteRows = grade.AllowUserToResizeRows = false;
             grade.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             grade.MultiSelect = true;
@@ -138,20 +144,121 @@ namespace NotasRetencaoINSS
             Coluna("Prestador", "Prestador / Emitente", 300, null).AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
             Coluna("Documento", "CNPJ/CPF", 135, null);
             Coluna("Valor", "Valor da nota", 115, "N2").DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-            Coluna("Inss", "INSS retido", 105, "N2").DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-            Coluna("Situacao", "Situação", 95, null);
+            Coluna("Inss", "INSS retido", 100, "N2").DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+            Coluna("Ir", "IR retido", 95, "N2").DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+            grade.Columns.Add(new DataGridViewComboBoxColumn
+            {
+                Name = "Natureza", DataPropertyName = "Natureza", HeaderText = "Natureza do rendimento", Width = 230,
+                DataSource = TabelaReinf.Naturezas, ValueMember = "Codigo", DisplayMember = "Texto",
+                DisplayStyle = DataGridViewComboBoxDisplayStyle.Nothing, FlatStyle = FlatStyle.Flat, DropDownWidth = 560,
+                MaxDropDownItems = 20, SortMode = DataGridViewColumnSortMode.Automatic,
+            });
+            Coluna("CodReceita", "Cód. receita IR", 95, null);
+            Coluna("Situacao", "Situação", 90, null);
             grade.Columns["Inss"].DefaultCellStyle.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            grade.Columns["Ir"].DefaultCellStyle.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             grade.CellFormatting += (s, e) =>
             {
                 if (e.RowIndex < 0) return;
                 var linha = ((DataRowView)grade.Rows[e.RowIndex].DataBoundItem).Row;
                 if ((string)linha["Situacao"] == "Cancelada") e.CellStyle.ForeColor = Color.Gray;
+                else if (grade.Columns[e.ColumnIndex].Name == "Natureza" && !(bool)linha["Escolhida"])
+                {
+                    e.CellStyle.ForeColor = Color.DimGray;
+                    e.CellStyle.Font = fonteSugerida;
+                }
             };
+            grade.CellToolTipTextNeeded += (s, e) =>
+            {
+                if (e.RowIndex < 0 || e.ColumnIndex < 0 || grade.Columns[e.ColumnIndex].Name != "Natureza") return;
+                var linha = ((DataRowView)grade.Rows[e.RowIndex].DataBoundItem).Row;
+                NaturezaRendimento n = TabelaReinf.Buscar(linha["Natureza"] as string);
+                e.ToolTipText = (n == null ? "" : n.Codigo + " – " + n.Descricao + " (" + n.Evento + ")\n")
+                    + ((bool)linha["Escolhida"] ? "Escolhida por você." : "Sugestão do programa: clique para conferir ou trocar.");
+            };
+            // Um clique na Natureza já abre a lista; a escolha vale na hora.
+            grade.CellClick += (s, e) =>
+            {
+                if (e.RowIndex < 0 || e.ColumnIndex < 0 || grade.Columns[e.ColumnIndex].Name != "Natureza" || Ocupado) return;
+                grade.CurrentCell = grade.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                if (grade.BeginEdit(true))
+                {
+                    var cb = grade.EditingControl as ComboBox;
+                    if (cb != null) cb.DroppedDown = true;
+                }
+            };
+            grade.CellBeginEdit += (s, e) => { if (Ocupado) e.Cancel = true; };
+            grade.CurrentCellDirtyStateChanged += (s, e) =>
+            {
+                if (grade.IsCurrentCellDirty && grade.CurrentCell is DataGridViewComboBoxCell) grade.CommitEdit(DataGridViewDataErrorContexts.Commit);
+            };
+            grade.CellValueChanged += (s, e) =>
+            {
+                if (e.RowIndex >= 0 && grade.Columns[e.ColumnIndex].Name == "Natureza") NaturezaEscolhida(e.RowIndex);
+            };
+            grade.DataError += (s, e) => { e.ThrowException = false; };
+            // Escolher na lista a mesma natureza que já estava sugerida também conta como conferida.
+            grade.EditingControlShowing += (s, e) =>
+            {
+                var cb = e.Control as ComboBox;
+                if (cb == null) return;
+                cb.SelectionChangeCommitted -= ConfirmarNatureza;
+                cb.SelectionChangeCommitted += ConfirmarNatureza;
+            };
+        }
+
+        void ConfirmarNatureza(object sender, EventArgs e)
+        {
+            int linha = grade.CurrentCell == null ? -1 : grade.CurrentCell.RowIndex;
+            if (linha < 0) return;
+            BeginInvoke((Action)(() =>
+            {
+                if (linha >= grade.Rows.Count || grade.DataSource == null) return;
+                grade.EndEdit();
+                var row = ((DataRowView)grade.Rows[linha].DataBoundItem).Row;
+                if (!(bool)row["Escolhida"]) NaturezaEscolhida(linha);
+            }));
+        }
+
+        /// <summary>A pessoa escolheu a natureza de uma nota: grava, e as notas do mesmo prestador sem escolha passam a sugerir a mesma.</summary>
+        void NaturezaEscolhida(int linhaGrade)
+        {
+            if (atualizandoNaturezas) return;
+            var row = ((DataRowView)grade.Rows[linhaGrade].DataBoundItem).Row;
+            string codigo = row["Natureza"] as string;
+            if (TabelaReinf.Buscar(codigo) == null) return;
+            Nota escolhida = filtradas[(int)row["Indice"]];
+            repo.DefinirNatureza(escolhida, codigo);
+
+            atualizandoNaturezas = true;
+            try
+            {
+                foreach (DataRow r in ((DataTable)grade.DataSource).Rows)
+                {
+                    Nota n = filtradas[(int)r["Indice"]];
+                    if (n != escolhida && (n.EmitenteDoc != escolhida.EmitenteDoc || n.Tipo != escolhida.Tipo || repo.NaturezaEscolhida(n))) continue;
+                    string nat = repo.Natureza(n);
+                    if (!Equals(r["Natureza"], nat)) r["Natureza"] = nat;
+                    r["Escolhida"] = repo.NaturezaEscolhida(n);
+                    r["CodReceita"] = CodigoReceitaIr(n, nat);
+                }
+            }
+            finally { atualizandoNaturezas = false; }
+
+            try { Armazenamento.SalvarNotas(repo.Base); }
+            catch (Exception ex) { MessageBox.Show(this, "Não foi possível gravar a natureza escolhida:\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+        }
+
+        string CodigoReceitaIr(Nota n, string natureza)
+        {
+            if (n.IrRetido <= 0) return "";
+            string c = TabelaReinf.CodigoIr(natureza, cfg.ClassTrib85);
+            return c != "" ? c : "sem código";
         }
 
         DataGridViewTextBoxColumn Coluna(string campo, string titulo, int largura, string formato)
         {
-            var c = new DataGridViewTextBoxColumn { Name = campo, DataPropertyName = campo, HeaderText = titulo, Width = largura, SortMode = DataGridViewColumnSortMode.Automatic };
+            var c = new DataGridViewTextBoxColumn { Name = campo, DataPropertyName = campo, HeaderText = titulo, Width = largura, SortMode = DataGridViewColumnSortMode.Automatic, ReadOnly = true };
             if (formato != null) { c.DefaultCellStyle.Format = formato; c.DefaultCellStyle.FormatProvider = Formatos.PtBr; }
             grade.Columns.Add(c);
             return c;
@@ -208,6 +315,7 @@ namespace NotasRetencaoINSS
                     Recebida(n)
                     && n.Emissao != null && string.CompareOrdinal(n.Emissao, de) >= 0 && string.CompareOrdinal(n.Emissao, ate) <= 0
                     && (!rbComInss.Checked || n.InssRetido > 0)
+                    && (!rbComIr.Checked || n.IrRetido > 0)
                     && (ckCanceladas.Checked || !repo.Cancelada(n))
                     && (busca == "" || (n.EmitenteNome ?? "").ToLowerInvariant().Contains(busca)
                         || (buscaDigitos != "" && ((n.EmitenteDoc ?? "").Contains(buscaDigitos) || n.Numero == buscaDigitos || (n.Chave ?? "").Contains(buscaDigitos)))))
@@ -223,20 +331,27 @@ namespace NotasRetencaoINSS
             t.Columns.Add("Documento", typeof(string));
             t.Columns.Add("Valor", typeof(decimal));
             t.Columns.Add("Inss", typeof(decimal));
+            t.Columns.Add("Ir", typeof(decimal));
+            t.Columns.Add("Natureza", typeof(string));
+            t.Columns.Add("Escolhida", typeof(bool));
+            t.Columns.Add("CodReceita", typeof(string));
             t.Columns.Add("Situacao", typeof(string));
             for (int i = 0; i < filtradas.Count; i++)
             {
                 Nota n = filtradas[i];
                 DateTime? comp = Formatos.ParaData(n.Competencia);
+                string nat = repo.Natureza(n);
                 t.Rows.Add(i, n.Tipo == "nfse" ? "NFS-e" : "NF-e", n.Numero, Formatos.ParaData(n.Emissao).Value,
                     comp.HasValue ? (object)comp.Value : DBNull.Value, n.EmitenteNome, Formatos.CnpjCpf(n.EmitenteDoc),
-                    n.Valor, n.InssRetido, repo.Cancelada(n) ? "Cancelada" : Planilha.SituacaoTexto(n));
+                    n.Valor, n.InssRetido, n.IrRetido, nat, repo.NaturezaEscolhida(n), CodigoReceitaIr(n, nat),
+                    repo.Cancelada(n) ? "Cancelada" : Planilha.SituacaoTexto(n));
             }
             grade.DataSource = t;
 
             var ativas = filtradas.Where(n => !repo.Cancelada(n)).ToList();
             lbTotais.Text = ativas.Count + (ativas.Count == 1 ? " nota" : " notas") + " · Valor " + Formatos.Dinheiro(ativas.Sum(n => n.Valor))
                 + " · INSS retido " + Formatos.Dinheiro(ativas.Sum(n => n.InssRetido))
+                + " · IR retido " + Formatos.Dinheiro(ativas.Sum(n => n.IrRetido))
                 + (filtradas.Count > ativas.Count ? "   (canceladas fora da soma)" : "");
             btExcel.Enabled = filtradas.Count > 0 && !Ocupado;
             AtualizarBotaoArquivos();
@@ -395,15 +510,16 @@ namespace NotasRetencaoINSS
 
         void Exportar()
         {
-            string nome = "Notas INSS " + dtDe.Value.ToString("dd-MM-yyyy") + " a " + dtAte.Value.ToString("dd-MM-yyyy") + ".xlsx";
+            string nome = (rbComIr.Checked ? "Notas IR " : rbComInss.Checked ? "Notas INSS " : "Notas ") + dtDe.Value.ToString("dd-MM-yyyy") + " a " + dtAte.Value.ToString("dd-MM-yyyy") + ".xlsx";
             using (var dlg = new SaveFileDialog { Filter = "Planilha do Excel (*.xlsx)|*.xlsx", FileName = nome, InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) })
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
                 try
                 {
-                    string titulo = (rbComInss.Checked ? "Notas com retenção de INSS" : "Notas recebidas") + " — " + (cfg.NomeEntidade ?? "") + " — CNPJ " + Formatos.CnpjCpf(cfg.Cnpj)
+                    string titulo = (rbComInss.Checked ? "Notas com retenção de INSS" : rbComIr.Checked ? "Notas com retenção de IR" : "Notas recebidas")
+                        + " — " + (cfg.NomeEntidade ?? "") + " — CNPJ " + Formatos.CnpjCpf(cfg.Cnpj)
                         + " — emissão de " + dtDe.Value.ToString("dd/MM/yyyy") + " a " + dtAte.Value.ToString("dd/MM/yyyy");
-                    Planilha.Gerar(dlg.FileName, titulo, filtradas, repo.Cancelada);
+                    Planilha.Gerar(dlg.FileName, titulo, filtradas, repo.Cancelada, repo.Natureza, cfg.ClassTrib85);
                     if (MessageBox.Show(this, "Planilha salva. Abrir agora?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
                         Process.Start(dlg.FileName);
                 }

@@ -21,6 +21,10 @@ namespace NotasRetencaoINSS
         public decimal Valor { get; set; }          // vServ (NFS-e) / vNF (NF-e)
         public decimal? BaseInss { get; set; }      // vBCRetPrev (NF-e)
         public decimal InssRetido { get; set; }     // vRetCP (NFS-e) / vRetPrev (NF-e)
+        public decimal IrRetido { get; set; }       // vRetIRRF (NFS-e) / vIRRF (NF-e)
+        public decimal CsrfRetida { get; set; }     // CSLL + PIS + COFINS retidos (ver LeitorXml.CsrfNfse)
+        public string SimplesNacional { get; set; } // Não | MEI | Sim — optante não sofre retenção de IR (IN 1.234, art. 4º)
+        public string Natureza { get; set; }        // natureza de rendimento escolhida na tela; vazio = sugerida
         public string CodigoServico { get; set; }
         public string Descricao { get; set; }
         public string Municipio { get; set; }
@@ -46,13 +50,16 @@ namespace NotasRetencaoINSS
 
     public class BaseNotas
     {
+        /// <summary>2 = com IR, CSLL/PIS/COFINS e Simples. Arquivo na versão 1 é completado relendo os XML guardados.</summary>
+        public const int VersaoAtual = 2;
+
         public int Versao { get; set; }
         public List<Nota> Notas { get; set; }
         public List<EventoNota> Eventos { get; set; }
 
         public BaseNotas()
         {
-            Versao = 1;
+            Versao = VersaoAtual;
             Notas = new List<Nota>();
             Eventos = new List<EventoNota>();
         }
@@ -69,6 +76,12 @@ namespace NotasRetencaoINSS
         public string Uf { get; set; }
         public bool IncluirNfe { get; set; }
         public int Ambiente { get; set; }                // 1 produção, 2 homologação (só pelo arquivo)
+        /// <summary>
+        /// Classificação tributária do declarante na EFD-Reinf. "85" (administração direta, autarquia, fundação)
+        /// usa a coluna "Sim" do Anexo I; outra (empresa pública, sociedade de economia mista) usa a "Não". Só pelo arquivo.
+        /// </summary>
+        public string ClassTrib { get; set; }
+        public bool ClassTrib85 { get { return string.IsNullOrEmpty(ClassTrib) || ClassTrib == "85"; } }
 
         public string UltNsuNfse { get; set; }
         public string UltNsuNfe { get; set; }
@@ -88,6 +101,7 @@ namespace NotasRetencaoINSS
         {
             OrigemCertificado = "windows";
             Ambiente = 1;
+            ClassTrib = "85";
             UltNsuNfse = "0";
             UltNsuNfe = "0";
         }

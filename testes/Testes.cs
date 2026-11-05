@@ -56,6 +56,10 @@ namespace NotasRetencaoINSS
             Rodar("Bloqueio 656", Bloqueio656);
             Rodar("Planilha", PlanilhaXlsx);
             Rodar("Salvar XML e PDF (servidor simulado)", SalvarArquivos);
+            Rodar("Leitura de IR e CSLL/PIS/COFINS", LeituraIr);
+            Rodar("Anexo I da EFD-Reinf", AnexoReinf);
+            Rodar("Natureza de rendimento", NaturezaNoRepositorio);
+            Rodar("Atualização do notas.json antigo", AtualizacaoVersao1);
 
             Console.WriteLine();
             Console.WriteLine(ok + " verificações ok, " + falhas + " falha(s). Dados de teste em " + pasta);
@@ -525,7 +529,7 @@ namespace NotasRetencaoINSS
             esquisita.EmitenteNome = "A & B <Serviços> \"Ltda\"\u0001";
 
             string arq = Path.Combine(Armazenamento.Pasta, "teste.xlsx");
-            Planilha.Gerar(arq, "Notas com retenção de INSS — teste", repo.Base.Notas, repo.Cancelada);
+            Planilha.Gerar(arq, "Notas com retenção de INSS — teste", repo.Base.Notas, repo.Cancelada, repo.Natureza, true);
             using (ZipArchive z = ZipFile.OpenRead(arq))
             {
                 foreach (ZipArchiveEntry e in z.Entries)
@@ -534,15 +538,154 @@ namespace NotasRetencaoINSS
                         var d = new XmlDocument();
                         d.LoadXml(sr.ReadToEnd());
                     }
-                Checar(z.Entries.Count == 7, "7 partes no xlsx");
+                Checar(z.Entries.Count == 8, "8 partes no xlsx (3 abas)");
                 string s1 = new StreamReader(z.GetEntry("xl/worksheets/sheet1.xml").Open()).ReadToEnd();
                 string s2 = new StreamReader(z.GetEntry("xl/worksheets/sheet2.xml").Open()).ReadToEnd();
-                Checar(s1.Contains("SUMIF(N4:N6,\"&lt;&gt;Cancelada\",M4:M6)") || s1.Contains("SUMIF(N4:N6,&quot;&lt;&gt;Cancelada&quot;,M4:M6)"), "total com SUMIF sem canceladas");
+                string s3 = new StreamReader(z.GetEntry("xl/worksheets/sheet3.xml").Open()).ReadToEnd();
+                string wb = new StreamReader(z.GetEntry("xl/workbook.xml").Open()).ReadToEnd();
+                Checar(s1.Contains("SUMIF(U4:U6,&quot;&lt;&gt;Cancelada&quot;,M4:M6)"), "total do INSS com SUMIF sem canceladas (Situação na coluna U)");
+                Checar(s1.Contains("SUMIF(U4:U6,&quot;&lt;&gt;Cancelada&quot;,N4:N6)"), "total do IR com SUMIF");
                 Checar(s1.Contains("<v>330</v>") || s1.Contains("<v>330.00</v>"), "INSS somado sem a cancelada (110+220)");
+                Checar(s1.Contains("<v>30</v>") || s1.Contains("<v>30.00</v>"), "IR somado sem a cancelada (15+15)");
                 Checar(s1.Contains("Cancelada"), "situação cancelada na linha");
                 Checar(s1.Contains("A &amp; B &lt;Serviços&gt;"), "texto escapado");
+                Checar(s1.Contains(">17099<") && s1.Contains(">Demais serviços<") && s1.Contains(">6256-05<"), "natureza, descrição e código de receita na aba Notas");
+                Checar(s1.Contains("<autoFilter ref=\"A3:V6\"/>") && wb.Contains("Notas!$A$3:$V$6"), "filtro cobre todas as colunas");
                 Checar(s2.Contains("12.345.678/0001-90") && (s2.Contains("<v>3000</v>") || s2.Contains("<v>3000.00</v>")), "aba por prestador somada");
+                Checar(wb.Contains("name=\"EFD-Reinf\""), "aba EFD-Reinf");
+                Checar(s3.Contains(">R-4020<") && s3.Contains(">17099<") && s3.Contains(">6256-05<") && (s3.Contains("<v>30</v>") || s3.Contains("<v>30.00</v>")),
+                    "EFD-Reinf: prestador × natureza com IR somado e código");
+                Checar(s3.Contains("data do pagamento não vem na nota"), "aviso da data de pagamento");
             }
+        }
+
+        // ---------------------------------------------------------------- IR, natureza de rendimento e Anexo I
+
+        static void LeituraIr()
+        {
+            // NFS-e: IR, CSLL/PIS/COFINS pelo leiaute original (tpRetPisCofins 1 = PIS/COFINS retidos) e Simples.
+            string ch = Amostras.ChaveNfse(601);
+            string tribFed = "<piscofins><CST>01</CST><vBCPisCofins>1000.00</vBCPisCofins><pAliqPis>0.65</pAliqPis><pAliqCofins>3.00</pAliqCofins>"
+                           + "<vPis>6.50</vPis><vCofins>30.00</vCofins><tpRetPisCofins>1</tpRetPisCofins></piscofins><vRetCP>110.00</vRetCP><vRetIRRF>48.00</vRetIRRF><vRetCSLL>10.00</vRetCSLL>";
+            Nota n = LeitorXml.LerNfse(Amostras.Nfse(ch, "601", Amostras.CnpjPrefeitura, 1000m, null, tribFedXml: tribFed, cTribNac: "110201", opSimpNac: "3"), "NFSE", ch, "1").Nota;
+            Igual(48m, n.IrRetido, "vRetIRRF");
+            Igual(110m, n.InssRetido, "vRetCP continua");
+            Igual(46.5m, n.CsrfRetida, "CSLL + PIS + COFINS retidos (tpRetPisCofins 1)");
+            Igual("Sim", n.SimplesNacional, "opSimpNac 3 = Simples");
+            Igual("110201", n.CodigoServico, "cTribNac");
+
+            Func<string, decimal> csrf = x => LeitorXml.CsrfNfse(LeitorXml.Carregar("<tribFed>" + x + "</tribFed>").DocumentElement);
+            Igual(10m, csrf("<piscofins><vPis>6.50</vPis><vCofins>30.00</vCofins><tpRetPisCofins>2</tpRetPisCofins></piscofins><vRetCSLL>10.00</vRetCSLL>"),
+                "PIS/COFINS não retidos (2): só a CSLL");
+            Igual(10m, csrf("<vRetCSLL>10.00</vRetCSLL>"), "sem grupo piscofins: só vRetCSLL");
+            Igual(46.5m, csrf("<piscofins><vPis>6.50</vPis><vCofins>30.00</vCofins><tpRetPisCofins>3</tpRetPisCofins></piscofins><vRetCSLL>46.50</vRetCSLL>"),
+                "NT 007 (3): vRetCSLL já é o total, sem somar PIS/COFINS de novo");
+            Igual(0m, csrf("<piscofins><vPis>6.50</vPis><vCofins>30.00</vCofins><tpRetPisCofins>0</tpRetPisCofins></piscofins>"), "NT 007 (0): nada retido");
+            Igual(0m, LeitorXml.CsrfNfse(null), "sem tribFed");
+
+            Nota semIr = LeitorXml.LerNfse(Amostras.Nfse(ch, "602", Amostras.CnpjPrefeitura, 1000m, null), "NFSE", ch, "2").Nota;
+            Checar(semIr.IrRetido == 0m && semIr.CsrfRetida == 0m && semIr.SimplesNacional == "Não", "nota sem tributos federais");
+
+            // NF-e: retTrib.
+            string chNfe = Amostras.ChaveNfe("6001");
+            Nota nfe = LeitorXml.LerNfe(Amostras.ProcNfe(chNfe, "6001", 2000m, null, "<vRetCOFINS>60.00</vRetCOFINS><vRetCSLL>20.00</vRetCSLL><vBCIRRF>2000.00</vBCIRRF><vIRRF>24.00</vIRRF>", "4"), "procNFe", "1").Nota;
+            Igual(24m, nfe.IrRetido, "NF-e vIRRF");
+            Igual(80m, nfe.CsrfRetida, "NF-e vRetPIS + vRetCOFINS + vRetCSLL");
+            Igual("MEI", nfe.SimplesNacional, "NF-e CRT 4 = MEI");
+        }
+
+        static void AnexoReinf()
+        {
+            Igual(51, TabelaReinf.Naturezas.Count, "50 naturezas do grupo 17 + 10002");
+            Checar(TabelaReinf.Naturezas.Where(x => x.Codigo.StartsWith("17")).All(x => x.Evento == "R-4020"), "grupo 17 é do R-4020");
+            Igual("R-4010", TabelaReinf.Buscar("10002").Evento, "10002 é do R-4010");
+            Checar(TabelaReinf.Naturezas.All(x => x.Texto.Length <= 80 && x.Texto.StartsWith(x.Codigo + " – ")), "texto curto para a lista");
+
+            // Códigos conferidos linha a linha no PDF (Manual da EFD-Reinf 2.1.2.1, Anexo I).
+            Igual("6256-05", TabelaReinf.CodigoIr("17031", true), "Vigilância, IR, administração pública");
+            Igual("6256-06", TabelaReinf.CodigoIr("17031", false), "Vigilância, IR, demais entidades");
+            Igual("3280-06", TabelaReinf.CodigoIr("17025", true), "cooperativas: IR 3280-06");
+            Igual("", TabelaReinf.CodigoIr("17050", true), "publicidade em conformidade: sem código de IR");
+            Igual("0588-07", TabelaReinf.CodigoIr("10002", true), "pessoa física: IRPF 0588-07");
+            Igual("", TabelaReinf.CodigoIr("99999", true), "natureza inexistente");
+            Igual("619005", TabelaReinf.Buscar("17031").CodigoReceita(TabelaReinf.AGREGADO, true), "agregado da vigilância 6190-05");
+            Igual("614705", TabelaReinf.Buscar("17001").CodigoReceita(TabelaReinf.AGREGADO, true), "agregado da alimentação 6147-05");
+            Igual("906005", TabelaReinf.Buscar("17010").CodigoReceita(TabelaReinf.AGREGADO, true), "agregado dos combustíveis 9060-05");
+            Igual("CSLL 6228-05 · COFINS 6243-05 · PIS 6230-05", TabelaReinf.CodigosCsrf("17099", true), "CSLL/COFINS/PIS de demais serviços");
+            Igual("CSLL 6228-05", TabelaReinf.CodigosCsrf("17013", true), "combustível de varejista: só CSLL");
+            Igual("6256-05", TabelaReinf.Formatar("625605"), "formato da DCTFWeb");
+
+            Func<string, string, string, string> sugerir = (tipo, doc, servico) =>
+                TabelaReinf.Sugerir(new Nota { Tipo = tipo, EmitenteDoc = doc, CodigoServico = servico });
+            Igual("17031", sugerir("nfse", Amostras.CnpjPrestador, "110201"), "11.02 → Vigilância");
+            Igual("17032", sugerir("nfse", Amostras.CnpjPrestador, "071001"), "7.10 → Limpeza");
+            Igual("17033", sugerir("nfse", Amostras.CnpjPrestador, "170501"), "17.05 → Locação de mão de obra");
+            Igual("17034", sugerir("nfse", Amostras.CnpjPrestador, "100501"), "10.05 → Intermediação");
+            Igual("17099", sugerir("nfse", Amostras.CnpjPrestador, "100801"), "10.08 (publicidade) fica em Demais serviços");
+            Igual("17099", sugerir("nfse", Amostras.CnpjPrestador, "070201"), "construção civil fica em Demais serviços");
+            Igual("17099", sugerir("nfse", Amostras.CnpjPrestador, ""), "sem código de serviço");
+            Igual("10002", sugerir("nfse", "12345678909", "170501"), "prestador pessoa física → 10002");
+            Igual("17009", sugerir("nfe", Amostras.CnpjPrestador, ""), "NF-e → Mercadorias");
+        }
+
+        static void NaturezaNoRepositorio()
+        {
+            var repo = new Repositorio(new BaseNotas());
+            var notas = new List<Nota>();
+            for (int i = 1; i <= 3; i++)
+            {
+                string ch = Amostras.ChaveNfse(700 + i);
+                string xml = Amostras.Nfse(ch, (700 + i).ToString(), Amostras.CnpjPrefeitura, 100m, 11m);
+                repo.GravarNota(LeitorXml.LerNfse(xml, "NFSE", ch, i.ToString()).Nota, xml);
+                notas.Add(repo.Buscar("nfse", ch));
+            }
+            notas[2].EmitenteDoc = "99888777000166";
+            Checar(notas.All(n => repo.Natureza(n) == "17099" && !repo.NaturezaEscolhida(n)), "sem escolha: sugestão pelo serviço");
+
+            repo.DefinirNatureza(notas[0], "17032");
+            Checar(repo.NaturezaEscolhida(notas[0]) && repo.Natureza(notas[0]) == "17032", "escolha gravada na nota");
+            Checar(repo.Natureza(notas[1]) == "17032" && !repo.NaturezaEscolhida(notas[1]), "mesmo prestador passa a sugerir a escolha");
+            Igual("17099", repo.Natureza(notas[2]), "outro prestador não muda");
+
+            repo.DefinirNatureza(notas[1], "17033");
+            Igual("17032", repo.Natureza(notas[0]), "escolha da própria nota prevalece");
+
+            Armazenamento.SalvarNotas(repo.Base);
+            var relido = new Repositorio(Armazenamento.LerNotas());
+            Igual("17032", relido.Natureza(relido.Buscar("nfse", notas[0].Chave)), "natureza escolhida relida do disco");
+
+            // Resumo de NF-e com natureza escolhida, depois chega a completa: a escolha fica.
+            string chNfe = Amostras.ChaveNfe("7001");
+            repo.GravarNota(LeitorXml.LerNfe(Amostras.ResNfe(chNfe, 10m), "resNFe", "1").Nota, null);
+            repo.DefinirNatureza(repo.Buscar("nfe", chNfe), "17010");
+            string proc = Amostras.ProcNfe(chNfe, "7001", 10m, null);
+            repo.GravarNota(LeitorXml.LerNfe(proc, "procNFe", "2").Nota, proc);
+            Igual("17010", repo.Buscar("nfe", chNfe).Natureza, "natureza mantida quando a NF-e completa substitui o resumo");
+            File.Delete(Path.Combine(Armazenamento.Pasta, "notas.json"));
+        }
+
+        /// <summary>notas.json da versão 1 (sem IR): ao abrir, o IR vem dos XML já guardados.</summary>
+        static void AtualizacaoVersao1()
+        {
+            string ch = Amostras.ChaveNfse(801);
+            string xml = Amostras.Nfse(ch, "801", Amostras.CnpjPrefeitura, 1000m, null, tribFedXml: "<vRetIRRF>48.00</vRetIRRF><vRetCSLL>10.00</vRetCSLL>", opSimpNac: "2");
+            Nota n = LeitorXml.LerNfse(xml, "NFSE", ch, "1").Nota;
+            n.ArquivoXml = Armazenamento.GravarXml("nfse", "2026-10", ch + ".xml", xml);
+            n.IrRetido = 0m;
+            n.CsrfRetida = 0m;
+            n.SimplesNacional = null;
+            var antiga = new BaseNotas { Versao = 1 };
+            antiga.Notas.Add(n);
+            antiga.Notas.Add(new Nota { Tipo = "nfe", Chave = Amostras.ChaveNfe("8002"), Completo = false });   // só resumo: sem XML
+            Armazenamento.SalvarNotas(antiga);
+
+            BaseNotas b = Armazenamento.LerNotas();
+            Igual(BaseNotas.VersaoAtual, b.Versao, "versão atualizada");
+            Igual(48m, b.Notas[0].IrRetido, "IR lido do XML guardado");
+            Igual(10m, b.Notas[0].CsrfRetida, "CSLL lida do XML guardado");
+            Igual("MEI", b.Notas[0].SimplesNacional, "Simples lido do XML guardado");
+            Checar(File.ReadAllText(Path.Combine(Armazenamento.Pasta, "notas.json")).Contains("\"Versao\":2"), "arquivo regravado na versão 2");
+            File.Delete(Path.Combine(Armazenamento.Pasta, "notas.json"));
         }
     }
 }

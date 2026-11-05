@@ -11,18 +11,21 @@ namespace NotasRetencaoINSS
         public const string CnpjPrefeitura = "11222333000181";
         public const string CnpjPrestador = "12345678000190";
 
-        public static string Nfse(string chave, string numero, string tomador, decimal vServ, decimal? vRetCP, string dhProc = "2026-10-15T09:12:00-03:00")
+        /// <param name="tribFedXml">conteúdo do grupo tribFed; null = vRetCP informado + vRetIRRF 15,00</param>
+        public static string Nfse(string chave, string numero, string tomador, decimal vServ, decimal? vRetCP, string dhProc = "2026-10-15T09:12:00-03:00",
+                                  string tribFedXml = null, string cTribNac = "070201", string opSimpNac = "1")
         {
-            string tribFed = vRetCP.HasValue ? "<tribFed><vRetCP>" + vRetCP.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "</vRetCP><vRetIRRF>15.00</vRetIRRF></tribFed>" : "";
+            string tribFed = tribFedXml != null ? "<tribFed>" + tribFedXml + "</tribFed>"
+                : vRetCP.HasValue ? "<tribFed><vRetCP>" + vRetCP.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "</vRetCP><vRetIRRF>15.00</vRetIRRF></tribFed>" : "";
             return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><NFSe versao=\"1.00\" xmlns=\"http://www.sped.fazenda.gov.br/nfse\"><infNFSe Id=\"NFS" + chave + "\">"
                 + "<xLocEmi>Uberlândia</xLocEmi><xLocPrestacao>Uberlândia</xLocPrestacao><nNFSe>" + numero + "</nNFSe><cLocIncid>3170206</cLocIncid><xTribNac>Limpeza</xTribNac>"
                 + "<verAplic>1.0</verAplic><ambGer>2</ambGer><tpEmis>1</tpEmis><procEmi>1</procEmi><cStat>100</cStat><dhProc>" + dhProc + "</dhProc><nDFSe>1</nDFSe>"
                 + "<emit><CNPJ>" + CnpjPrestador + "</CNPJ><IM>123</IM><xNome>LIMPA TUDO SERVIÇOS LTDA</xNome><enderNac><xLgr>Rua A</xLgr></enderNac></emit>"
                 + "<valores><vBC>" + vServ.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "</vBC><vLiq>9000.00</vLiq></valores>"
                 + "<DPS versao=\"1.00\"><infDPS Id=\"DPS317020621234567800019000900000000000055\"><tpAmb>1</tpAmb><dhEmi>2026-10-15T09:10:00-03:00</dhEmi><serie>900</serie><nDPS>55</nDPS>"
-                + "<dCompet>2026-09-30</dCompet><tpEmit>1</tpEmit><cLocEmi>3170206</cLocEmi><prest><CNPJ>" + CnpjPrestador + "</CNPJ><regTrib><opSimpNac>1</opSimpNac></regTrib></prest>"
+                + "<dCompet>2026-09-30</dCompet><tpEmit>1</tpEmit><cLocEmi>3170206</cLocEmi><prest><CNPJ>" + CnpjPrestador + "</CNPJ><regTrib><opSimpNac>" + opSimpNac + "</opSimpNac></regTrib></prest>"
                 + "<toma><CNPJ>" + tomador + "</CNPJ><xNome>MUNICIPIO DE TESTE</xNome><end><endNac><cMun>3170206</cMun></endNac></end></toma>"
-                + "<serv><locPrest><cLocPrestacao>3170206</cLocPrestacao></locPrest><cServ><cTribNac>070201</cTribNac><xDescServ>Limpeza predial - setembro</xDescServ></cServ></serv>"
+                + "<serv><locPrest><cLocPrestacao>3170206</cLocPrestacao></locPrest><cServ><cTribNac>" + cTribNac + "</cTribNac><xDescServ>Limpeza predial - setembro</xDescServ></cServ></serv>"
                 + "<valores><vServPrest><vServ>" + vServ.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "</vServ></vServPrest><trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>1</tpRetISSQN></tribMun>"
                 + tribFed + "<totTrib><indTotTrib>0</indTotTrib></totTrib></trib></valores></infDPS></DPS></infNFSe></NFSe>";
         }
@@ -48,13 +51,14 @@ namespace NotasRetencaoINSS
                 + "<dhRecbto>2026-10-10T08:00:05-03:00</dhRecbto><nProt>131260000000001</nProt><cSitNFe>" + cSit + "</cSitNFe></resNFe>";
         }
 
-        public static string ProcNfe(string chave, string numero, decimal vNF, decimal? vRetPrev)
+        /// <param name="retTribExtra">mais campos do retTrib (vIRRF, vRetCSLL...)</param>
+        public static string ProcNfe(string chave, string numero, decimal vNF, decimal? vRetPrev, string retTribExtra = "", string crt = "3")
         {
-            string ret = vRetPrev.HasValue
-                ? "<retTrib><vRetPIS>0.00</vRetPIS><vBCRetPrev>" + vNF.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "</vBCRetPrev><vRetPrev>" + vRetPrev.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "</vRetPrev></retTrib>"
+            string ret = vRetPrev.HasValue || retTribExtra != ""
+                ? "<retTrib><vRetPIS>0.00</vRetPIS>" + retTribExtra + (vRetPrev.HasValue ? "<vBCRetPrev>" + vNF.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "</vBCRetPrev><vRetPrev>" + vRetPrev.Value.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "</vRetPrev>" : "") + "</retTrib>"
                 : "";
             return "<nfeProc xmlns=\"http://www.portalfiscal.inf.br/nfe\" versao=\"4.00\"><NFe><infNFe Id=\"NFe" + chave + "\" versao=\"4.00\"><ide><cUF>31</cUF><nNF>" + numero + "</nNF><serie>1</serie>"
-                + "<dhEmi>2026-10-10T08:00:00-03:00</dhEmi></ide><emit><CNPJ>" + CnpjPrestador + "</CNPJ><xNome>FORNECEDORA LTDA</xNome><enderEmit><xMun>Uberlândia</xMun></enderEmit></emit>"
+                + "<dhEmi>2026-10-10T08:00:00-03:00</dhEmi></ide><emit><CNPJ>" + CnpjPrestador + "</CNPJ><xNome>FORNECEDORA LTDA</xNome><enderEmit><xMun>Uberlândia</xMun></enderEmit><CRT>" + crt + "</CRT></emit>"
                 + "<dest><CNPJ>" + CnpjPrefeitura + "</CNPJ><xNome>MUNICIPIO DE TESTE</xNome><enderDest><xMun>Teste</xMun></enderDest></dest>"
                 + "<det nItem=\"1\"><prod><xProd>Manutenção de ar condicionado</xProd></prod></det><det nItem=\"2\"><prod><xProd>Gás refrigerante</xProd></prod></det>"
                 + "<total><ICMSTot><vNF>" + vNF.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "</vNF></ICMSTot>" + ret + "</total></infNFe></NFe>"
