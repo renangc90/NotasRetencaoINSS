@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace NotasRetencaoINSS
@@ -33,6 +34,9 @@ namespace NotasRetencaoINSS
                 n.EmitenteDoc = "1234567800" + (1000 + i % nomes.Length * 7).ToString().PadLeft(4, '0');
                 repo.GravarNota(n, xml);
             }
+            // Natureza escolhida numa nota da vigilância: as outras do mesmo prestador passam a sugerir a mesma (em cinza).
+            Nota vigilancia = repo.Base.Notas.First(x => x.EmitenteNome.StartsWith("VIGIL"));
+            repo.DefinirNatureza(vigilancia, "17031");
             string cancelada = Amostras.ChaveNfse(203);
             repo.GravarEvento(new EventoNota { Tipo = "nfse", Chave = cancelada, TpEvento = "101101", Nsu = "99", Cancela = true }, null);
             string chNfe = Amostras.ChaveNfe("5521");
