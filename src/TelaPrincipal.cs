@@ -137,24 +137,26 @@ namespace NotasRetencaoINSS
             grade.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(220, 230, 241);
             grade.ShowCellToolTips = true;
 
-            Coluna("Tipo", "Tipo", 55, null);
-            Coluna("Numero", "Número", 80, null);
-            Coluna("Emissao", "Emissão", 85, "dd/MM/yyyy");
-            Coluna("Competencia", "Competência", 90, "dd/MM/yyyy");
-            Coluna("Prestador", "Prestador / Emitente", 300, null).AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-            Coluna("Documento", "CNPJ/CPF", 135, null);
-            Coluna("Valor", "Valor da nota", 115, "N2").DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-            Coluna("Inss", "INSS retido", 100, "N2").DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-            Coluna("Ir", "IR retido", 95, "N2").DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+            Coluna("Tipo", "Tipo", 50, null);
+            Coluna("Numero", "Número", 70, null);
+            Coluna("Emissao", "Emissão", 80, "dd/MM/yyyy");
+            Coluna("Competencia", "Competência", 85, "dd/MM/yyyy");
+            DataGridViewTextBoxColumn prestador = Coluna("Prestador", "Prestador / Emitente", 300, null);
+            prestador.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+            prestador.MinimumWidth = 200;
+            Coluna("Documento", "CNPJ/CPF", 130, null);
+            Coluna("Valor", "Valor da nota", 100, "N2").DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+            Coluna("Inss", "INSS retido", 90, "N2").DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+            Coluna("Ir", "IR retido", 85, "N2").DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
             grade.Columns.Add(new DataGridViewComboBoxColumn
             {
-                Name = "Natureza", DataPropertyName = "Natureza", HeaderText = "Natureza do rendimento", Width = 230,
+                Name = "Natureza", DataPropertyName = "Natureza", HeaderText = "Natureza do rendimento", Width = 210,
                 DataSource = TabelaReinf.Naturezas, ValueMember = "Codigo", DisplayMember = "Texto",
                 DisplayStyle = DataGridViewComboBoxDisplayStyle.Nothing, FlatStyle = FlatStyle.Flat, DropDownWidth = 560,
                 MaxDropDownItems = 20, SortMode = DataGridViewColumnSortMode.Automatic,
             });
-            Coluna("CodReceita", "Cód. receita IR", 95, null);
-            Coluna("Situacao", "Situação", 90, null);
+            Coluna("CodReceita", "Cód. receita IR", 100, null);
+            Coluna("Situacao", "Situação", 85, null);
             grade.Columns["Inss"].DefaultCellStyle.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             grade.Columns["Ir"].DefaultCellStyle.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             grade.CellFormatting += (s, e) =>

@@ -2,7 +2,7 @@ NOTAS COM RETENÇÃO DE INSS
 ==========================
 
 O programa baixa as notas emitidas para o CNPJ da prefeitura e mostra as que
-têm INSS retido, com total e exportação para Excel.
+têm INSS ou IR retido, com total e exportação para Excel.
 
 PRIMEIRO USO
 1. Extraia a pasta do .zip (botão direito > Extrair tudo) para a Área de
@@ -18,16 +18,33 @@ NO DIA A DIA
 - "Baixar notas novas": busca as notas que chegaram desde a última vez.
   A primeira busca demora mais, porque traz todo o histórico.
 - O período já abre no mês passado. Troque as datas para ver outro período.
-- "Só com INSS retido" mostra só as notas com retenção. "Todas as notas
-  recebidas" mostra todas.
+- "Só com INSS retido" e "Só com IR retido" mostram só as notas com essa
+  retenção. "Todas as notas recebidas" mostra todas.
 - Notas canceladas ficam escondidas e nunca entram no total.
 - "Exportar para Excel" gera a planilha do que está na tela, com uma aba das
-  notas e outra somada por prestador.
+  notas, outra somada por prestador e a aba "EFD-Reinf" (IR e CSLL/PIS/COFINS
+  retidos, somados por prestador e natureza do rendimento).
 - Dois cliques numa nota abrem a pasta com o XML dela.
 - "Salvar XML e PDF": salva numa pasta o XML e o PDF de cada nota da lista.
   Para salvar só algumas, selecione as linhas antes (Ctrl ou Shift + clique).
   O PDF da NFS-e vem do ADN (precisa de internet e do certificado). As NF-e
   saem só com o XML: a SEFAZ não entrega o PDF.
+
+IR RETIDO E EFD-REINF (R-4020)
+- "IR retido" vem do campo de IR retido que o prestador preencheu na nota.
+- "Natureza do rendimento" e "Cód. receita IR" seguem o Anexo I do Manual
+  da EFD-Reinf, na coluna da administração pública (IR: 6256-05).
+- Natureza em cinza é sugestão do programa, pelo código do serviço da nota
+  (vigilância, limpeza, locação de mão de obra, intermediação...). O resto
+  fica em "17099 – Demais serviços". Clique na natureza para conferir ou
+  trocar: a escolhida fica em preto.
+- A natureza escolhida passa a ser a sugestão para as outras notas do mesmo
+  prestador, inclusive as dos próximos meses.
+- Prestador pessoa física (CPF) aparece como 10002 (R-4010, IRPF 0588-07).
+- Optante do Simples Nacional não sofre retenção de IR. A coluna "Simples
+  Nacional" da planilha ajuda a conferir.
+- CSLL/PIS/COFINS retidos aparecem só na planilha, somados numa coluna: o
+  leiaute da NFS-e mudou em 2026 (NT 007) e o programa não separa os três.
 
 NF-E (MERCADORIA) - OPCIONAL
 Vem desligada. Para a SEFAZ entregar o XML completo de uma NF-e (onde está
@@ -49,9 +66,9 @@ LIMITES
   nota dele não aparece aqui.
 - Uberaba entrou no padrão nacional em 2026. Notas de prestadores de
   Uberaba emitidas antes disso, no sistema antigo da cidade, não estão no ADN.
-- A retenção aparece só se o prestador preencheu o campo de INSS retido. Se
-  ele escreveu a retenção só no texto da nota, ela aparece em "Todas as notas
-  recebidas", mas não em "Só com INSS retido".
+- A retenção aparece só se o prestador preencheu o campo de INSS ou de IR
+  retido. Se ele escreveu a retenção só no texto da nota, ela aparece em
+  "Todas as notas recebidas", mas não nos filtros de retenção.
 - Só aparecem notas emitidas para o CNPJ configurado. Fundos e órgãos com
   CNPJ próprio (Saúde, Educação etc.) precisam do certificado deles.
 - Pagamento por RPA, recibo ou nota em papel não passa pelo ADN.
