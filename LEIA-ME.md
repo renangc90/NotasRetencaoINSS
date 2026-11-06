@@ -26,12 +26,14 @@ Usa o `csc.exe` que já vem no Windows (`%WINDIR%\Microsoft.NET\Framework64\v4.0
 | `src/Certificados.cs` | Repositório do Windows (A1 importado ou A3) ou .pfx. CNPJ pelo SAN 2.16.76.1.3.3 ou pelo CN |
 | `src/ClienteFiscal.cs` | `HttpWebRequest` com TLS 1.2 e certificado de cliente. Usa o proxy do Windows com as credenciais do usuário |
 | `src/Planilha.cs` | .xlsx feito à mão (ZipArchive), sem depender de Excel. Abas Notas, Por prestador e EFD-Reinf (retenções por prestador × natureza) |
-| `src/Exportador.cs` | Botão "Salvar XML e PDF": copia o XML guardado e baixa o PDF da NFS-e (DANFSe) em `GET {adn}/danfse/{chave}`, guardado em `dados\pdf\...`. Para de pedir PDF depois de 3 falhas seguidas |
+| `src/Exportador.cs` | Botão "Salvar XML e PDF" e o PDF aberto com dois cliques (gerado em `dados\pdf\...`) |
+| `src/Danfse.cs` | PDF da NFS-e montado a partir do XML (leiaute simplificado, sem QR Code; marca d'água "CANCELADA"). A API de DANFSe do ADN foi descontinuada pela NT 008/2026 (3/8/2026) |
+| `src/Pdf.cs` | PDF 1.4 feito à mão: Helvetica/Helvetica-Bold com WinAnsiEncoding, linhas, retângulos, quebra de texto pela métrica da Helvetica. Interface `IDesenho` (os testes desenham as mesmas páginas num bitmap) |
 
 ## Status
 
-- Testado só com servidor simulado e certificado autoassinado: 184 verificações. A distribuição de NFS-e (DFe) já respondeu certo no ADN real. **A SEFAZ e o PDF do ADN ainda não foram conferidos de verdade**: o endereço `/danfse/{chave}` veio de clientes de terceiros.
-- Homologação: `"Ambiente": 2` no `dados\config.json`. As chaves `UrlAdn`, `UrlDanfse`, `UrlSefazDistribuicao` e `UrlSefazEvento` servem só para os testes.
+- Testado só com servidor simulado e certificado autoassinado: 206 verificações. A distribuição de NFS-e (DFe) já respondeu certo no ADN real. **A SEFAZ ainda não foi conferida de verdade.** O PDF gerado foi validado com o `pdftotext` (poppler) e conferido em imagem (`testes\bin\Testes.exe capturas <pasta>` gera `danfse*.png` e `danfse.pdf`).
+- Homologação: `"Ambiente": 2` no `dados\config.json`. As chaves `UrlAdn`, `UrlSefazDistribuicao` e `UrlSefazEvento` servem só para os testes.
 - `"ClassTrib"` no `dados\config.json` (padrão `"85"`, administração pública direta, autarquia e fundação) escolhe a coluna "Sim" do Anexo I (IR 6256-05). Qualquer outro valor usa a coluna "Não" (IR 6256-06).
 - **CSLL/PIS/COFINS da NFS-e são uma estimativa somada**: no leiaute original `vRetCSLL` é só a CSLL e PIS/COFINS foram retidos quando `tpRetPisCofins = 1`; na NT 007/2026 (`tpRetPisCofins` 0 e 3 a 9) `vRetCSLL` passa a ser o total dos três. As fontes divergem sobre o significado do código 1 depois da NT 007, então pode haver dupla contagem nesse caso. O IR (`vRetIRRF`) não tem essa ambiguidade.
 - A sugestão de natureza só cobre itens sem ambiguidade (11.02, 7.10, 17.05, 17.12, 16.01, 10.xx menos 10.08); o resto vai para 17099 e a pessoa confere na tela.

@@ -47,39 +47,7 @@ namespace NotasRetencaoINSS
             return LerRetorno(r.Status, r.Texto, ultNsu);
         }
 
-        /// <summary>
-        /// PDF oficial da NFS-e (DANFSe): GET {base}/danfse/{chave}, com o mesmo certificado.
-        /// Endereço tirado de clientes de terceiros — ainda não conferido no ADN real.
-        /// </summary>
-        public static string UrlDanfse(Configuracao cfg)
-        {
-            if (!string.IsNullOrEmpty(cfg.UrlDanfse)) return cfg.UrlDanfse.TrimEnd('/');
-            return cfg.Ambiente == 2 ? "https://adn.producaorestrita.nfse.gov.br/danfse" : "https://adn.nfse.gov.br/danfse";
-        }
-
-        /// <summary>Devolve o PDF ou lança ErroAviso com o motivo (que a tela mostra no fim).</summary>
-        public static byte[] Danfse(X509Certificate2 cert, Configuracao cfg, string chave)
-        {
-            RespostaArquivo r = ClienteFiscal.BaixarArquivo(cert, UrlDanfse(cfg) + "/" + chave, "application/pdf", "ADN (PDF da NFS-e)");
-            string texto = r.Bytes == null ? "" : Encoding.UTF8.GetString(r.Bytes, 0, Math.Min(r.Bytes.Length, 300));
-            if (r.Status == 401 || r.Status == 403) throw new ErroAviso(ClienteFiscal.ErroCertificado("ADN", r.Status, texto));
-            if (r.Status == 404) throw new ErroAviso("o ADN não achou o PDF da nota (HTTP 404)");
-            if (r.Status >= 300) throw new ErroAviso("o ADN respondeu HTTP " + r.Status + " ao pedir o PDF");
-            if (!EhPdf(r.Bytes)) throw new ErroAviso("o ADN não devolveu um PDF (veio: " + Resumir(texto) + ")");
-            return r.Bytes;
-        }
-
-        public static bool EhPdf(byte[] b)
-        {
-            return b != null && b.Length > 4 && b[0] == '%' && b[1] == 'P' && b[2] == 'D' && b[3] == 'F';
-        }
-
-        static string Resumir(string s)
-        {
-            s = System.Text.RegularExpressions.Regex.Replace(s ?? "", @"\s+", " ").Trim();
-            if (s == "") return "resposta vazia";
-            return s.Length > 120 ? s.Substring(0, 120) + "…" : s;
-        }
+        // O PDF da NFS-e (DANFSe) não vem mais do ADN: a API foi descontinuada pela NT 008/2026. Ver Danfse.cs.
 
         public static string Gunzip(byte[] gz)
         {

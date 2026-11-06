@@ -45,6 +45,15 @@ namespace NotasRetencaoINSS
             repo.GravarNota(LeitorXml.LerNfe(Amostras.ResNfe(chRes, 800m), "resNFe", "2").Nota, null);
             Armazenamento.SalvarNotas(repo.Base);
 
+            // PDF da NFS-e: o arquivo de verdade e as páginas em PNG para conferir o desenho.
+            string chDanfse = Amostras.ChaveNfse(950);
+            string xmlDanfse = Amostras.NfseCompleta(chDanfse, "431", "Vigilância armada 24h no Paço Municipal (contrato 45/2025) - outubro/2026. Postos: portaria principal, almoxarifado e garagem.");
+            File.WriteAllBytes(Path.Combine(saida, "danfse.pdf"), Danfse.GerarPdf(xmlDanfse, false));
+            SalvarDanfse(xmlDanfse, false, Path.Combine(saida, "danfse"));
+            SalvarDanfse(xmlDanfse, true, Path.Combine(saida, "danfse-cancelada"));
+            string longa = string.Join(" ", Enumerable.Repeat("Serviço de vigilância patrimonial com postos diurnos e noturnos, incluindo supervisão e rondas motorizadas.", 90));
+            SalvarDanfse(Amostras.NfseCompleta(chDanfse, "432", longa), false, Path.Combine(saida, "danfse-longa"));
+
             Application.EnableVisualStyles();
             var principal = new TelaPrincipal();
             var timer = new Timer { Interval = 1200 };
@@ -68,6 +77,16 @@ namespace NotasRetencaoINSS
             Application.Run(principal);
             Console.WriteLine("Capturas em " + saida);
             return 0;
+        }
+
+        static void SalvarDanfse(string xml, bool cancelada, string prefixo)
+        {
+            using (var d = new DesenhoBitmap())
+            {
+                Danfse.Desenhar(d, xml, cancelada);
+                for (int i = 0; i < d.Paginas.Count; i++)
+                    d.Paginas[i].Save(prefixo + "-p" + (i + 1) + ".png", ImageFormat.Png);
+            }
         }
 
         static void Salvar(Form f, string caminho)

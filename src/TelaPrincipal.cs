@@ -101,7 +101,17 @@ namespace NotasRetencaoINSS
             };
             btExcel.Click += (s, e) => Exportar();
             btArquivos.Click += (s, e) => SalvarArquivos();
-            grade.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) AbrirXml(e.RowIndex); };
+            grade.CellDoubleClick += (s, e) =>
+            {
+                if (e.RowIndex < 0 || (e.ColumnIndex >= 0 && grade.Columns[e.ColumnIndex].Name == "Natureza")) return;
+                AbrirNota(e.RowIndex);
+            };
+            grade.CellMouseClick += (s, e) =>
+            {
+                if (e.Button != MouseButtons.Right || e.RowIndex < 0) return;
+                Rectangle r = grade.GetCellDisplayRectangle(e.ColumnIndex < 0 ? 0 : e.ColumnIndex, e.RowIndex, false);
+                MenuDaNota(e.RowIndex, new Point(r.Left + e.X, r.Top + e.Y));
+            };
             grade.SelectionChanged += (s, e) => AtualizarBotaoArquivos();
             FormClosing += (s, e) =>
             {
@@ -379,6 +389,28 @@ namespace NotasRetencaoINSS
             return filtradas[(int)row["Indice"]];
         }
 
+        /// <summary>Dois cliques: NFS-e abre o PDF (gerado do XML); NF-e mostra o XML na pasta.</summary>
+        void AbrirNota(int linha)
+        {
+            Nota n = NotaDaLinha(linha);
+            if (n.Tipo != "nfse") { AbrirXml(linha); return; }
+            if (string.IsNullOrEmpty(n.ArquivoXml)) { AbrirXml(linha); return; }
+            string caminho;
+            try { caminho = Exportador.PdfParaAbrir(n, repo.Cancelada(n)); }
+            catch (Exception ex)
+            {
+                string motivo = ex is ErroAviso ? ex.Message : "Não foi possível montar o PDF desta nota: " + ex.Message;
+                if (MessageBox.Show(this, motivo + "\n\nAbrir a consulta pública da NFS-e no navegador? (a chave de acesso fica copiada para colar)", Text,
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes) ConsultaPublica(linha);
+                return;
+            }
+            try { Process.Start(caminho); }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "O PDF foi gerado, mas não abriu (falta um leitor de PDF?):\n" + caminho + "\n\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
         void AbrirXml(int linha)
         {
             Nota n = NotaDaLinha(linha);
@@ -390,6 +422,38 @@ namespace NotasRetencaoINSS
             string caminho = Armazenamento.CaminhoCompleto(n.ArquivoXml);
             if (!File.Exists(caminho)) { MessageBox.Show(this, "Arquivo não encontrado:\n" + caminho, Text); return; }
             try { Process.Start("explorer.exe", "/select,\"" + caminho + "\""); } catch (Exception) { }
+        }
+
+        void CopiarChave(int linha)
+        {
+            Nota n = NotaDaLinha(linha);
+            if (string.IsNullOrEmpty(n.Chave)) return;
+            try { Clipboard.SetText(n.Chave); lbStatus.Text = "Chave de acesso copiada: " + n.Chave; }
+            catch (Exception) { MessageBox.Show(this, "Chave de acesso:\n" + n.Chave, Text); }
+        }
+
+        /// <summary>Portal nacional da NFS-e: lá dá para ver e baixar o DANFSe oficial informando a chave.</summary>
+        void ConsultaPublica(int linha)
+        {
+            CopiarChave(linha);
+            try { Process.Start(Danfse.ConsultaPublica); }
+            catch (Exception) { MessageBox.Show(this, "Abra no navegador: " + Danfse.ConsultaPublica, Text); }
+        }
+
+        /// <summary>Botão direito numa nota.</summary>
+        void MenuDaNota(int linha, Point ondeNaGrade)
+        {
+            Nota n = NotaDaLinha(linha);
+            bool nfse = n.Tipo == "nfse";
+            var menu = new ContextMenuStrip();
+            var pdf = menu.Items.Add("Abrir a nota (PDF)", null, (s, e) => AbrirNota(linha));
+            pdf.Enabled = nfse && !string.IsNullOrEmpty(n.ArquivoXml);
+            pdf.Font = new Font(pdf.Font, FontStyle.Bold);
+            menu.Items.Add("Mostrar o XML na pasta", null, (s, e) => AbrirXml(linha)).Enabled = !string.IsNullOrEmpty(n.ArquivoXml);
+            menu.Items.Add("Copiar a chave de acesso", null, (s, e) => CopiarChave(linha)).Enabled = !string.IsNullOrEmpty(n.Chave);
+            if (nfse) menu.Items.Add("Consultar no portal nacional da NFS-e (DANFSe oficial)", null, (s, e) => ConsultaPublica(linha));
+            menu.Closed += (s, e) => BeginInvoke((Action)(() => menu.Dispose()));
+            menu.Show(grade, ondeNaGrade);
         }
 
         void AbrirConfiguracao()
@@ -457,22 +521,10 @@ namespace NotasRetencaoINSS
                 pasta = dlg.SelectedPath;
             }
 
-            // O certificado só é preciso para buscar no ADN o PDF que ainda não está guardado.
-            CertificadoInfo cert = null;
-            if (Exportador.PrecisaBaixarPdf(notas))
-            {
-                try { cert = Certificados.Carregar(cfg); }
-                catch (ErroAviso ex)
-                {
-                    if (MessageBox.Show(this, ex.Message + "\n\nSem o certificado o programa não busca o PDF no ADN. Salvar só os XML?", Text,
-                            MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-                }
-            }
-
             cfg.PastaArquivos = pasta;
             try { Armazenamento.SalvarConfiguracao(cfg); } catch (Exception) { }
 
-            exportando = new Exportador(cfg, cert, msg => BeginInvoke((Action)(() => lbStatus.Text = msg)));
+            exportando = new Exportador(repo.Cancelada, msg => BeginInvoke((Action)(() => lbStatus.Text = msg)));
             btBaixar.Enabled = btConfig.Enabled = btExcel.Enabled = btArquivos.Enabled = false;
             btParar.Visible = btParar.Enabled = true;
             btParar.Text = "Parar";
@@ -504,7 +556,7 @@ namespace NotasRetencaoINSS
                 MessageBox.Show(this, erro is ErroAviso ? erro.Message : "A gravação parou por um erro inesperado:\n" + erro.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            bool tudo = res.PdfFaltando == 0 && res.SemXml == 0 && !res.Parado;
+            bool tudo = res.PdfFalhou == 0 && res.SemXml == 0 && !res.Parado;
             if (MessageBox.Show(this, res.Resumo() + "\n\nAbrir a pasta agora?", Text, MessageBoxButtons.YesNo,
                     tudo ? MessageBoxIcon.Information : MessageBoxIcon.Warning) == DialogResult.Yes)
                 try { Process.Start("explorer.exe", "\"" + pasta + "\""); } catch (Exception) { }

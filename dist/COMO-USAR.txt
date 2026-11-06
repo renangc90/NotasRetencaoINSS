@@ -24,11 +24,17 @@ NO DIA A DIA
 - "Exportar para Excel" gera a planilha do que está na tela, com uma aba das
   notas, outra somada por prestador e a aba "EFD-Reinf" (IR e CSLL/PIS/COFINS
   retidos, somados por prestador e natureza do rendimento).
-- Dois cliques numa nota abrem a pasta com o XML dela.
+- Dois cliques numa NFS-e abrem a nota em PDF. Numa NF-e, abrem a pasta com
+  o XML.
+- Botão direito numa nota: abrir o PDF, mostrar o XML na pasta, copiar a
+  chave de acesso ou consultar a nota no portal nacional da NFS-e.
 - "Salvar XML e PDF": salva numa pasta o XML e o PDF de cada nota da lista.
   Para salvar só algumas, selecione as linhas antes (Ctrl ou Shift + clique).
-  O PDF da NFS-e vem do ADN (precisa de internet e do certificado). As NF-e
-  saem só com o XML: a SEFAZ não entrega o PDF.
+  As NF-e saem só com o XML.
+- O PDF da NFS-e é montado pelo próprio programa a partir do XML, sem
+  internet: desde agosto de 2026 o sistema nacional não entrega mais o PDF
+  (NT 008/2026). Para conferir a nota oficial, use "Consultar no portal
+  nacional" no botão direito: a chave já fica copiada para colar.
 
 IR RETIDO E EFD-REINF (R-4020)
 - "IR retido" vem do campo de IR retido que o prestador preencheu na nota.

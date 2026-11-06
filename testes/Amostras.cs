@@ -30,6 +30,29 @@ namespace NotasRetencaoINSS
                 + tribFed + "<totTrib><indTotTrib>0</indTotTrib></totTrib></trib></valores></infDPS></DPS></infNFSe></NFSe>";
         }
 
+        /// <summary>NFS-e com todos os grupos que o PDF mostra (endereços, ISSQN retido, retenções federais, informações complementares).</summary>
+        public static string NfseCompleta(string chave, string numero, string descricao)
+        {
+            return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><NFSe versao=\"1.00\" xmlns=\"http://www.sped.fazenda.gov.br/nfse\"><infNFSe Id=\"NFS" + chave + "\">"
+                + "<xLocEmi>Uberaba</xLocEmi><xLocPrestacao>Uberaba</xLocPrestacao><nNFSe>" + numero + "</nNFSe><cLocIncid>3170107</cLocIncid><xLocIncid>Uberaba</xLocIncid>"
+                + "<xTribNac>Vigilância, segurança ou monitoramento de bens, pessoas e semoventes.</xTribNac><verAplic>SefinNac_1.0</verAplic><ambGer>2</ambGer><tpEmis>1</tpEmis>"
+                + "<procEmi>1</procEmi><cStat>100</cStat><dhProc>2026-10-21T14:32:10-03:00</dhProc><nDFSe>123456</nDFSe>"
+                + "<emit><CNPJ>" + CnpjPrestador + "</CNPJ><IM>98765</IM><xNome>VIGILÂNCIA SEGURA EIRELI</xNome><enderNac><xLgr>Avenida Leopoldino de Oliveira</xLgr><nro>1500</nro>"
+                + "<xCpl>Sala 3</xCpl><xBairro>Centro</xBairro><cMun>3170107</cMun><UF>MG</UF><CEP>38010000</CEP></enderNac><fone>3433334444</fone><email>contato@vigilanciasegura.com.br</email></emit>"
+                + "<valores><vBC>12000.00</vBC><pAliqAplic>5.00</pAliqAplic><vISSQN>600.00</vISSQN><vTotalRet>1980.00</vTotalRet><vLiq>10020.00</vLiq></valores>"
+                + "<DPS versao=\"1.00\"><infDPS Id=\"DPS317010721234567800019000001000000000431\"><tpAmb>2</tpAmb><dhEmi>2026-10-21T14:30:00-03:00</dhEmi><verAplic>1.0</verAplic>"
+                + "<serie>1</serie><nDPS>" + numero + "</nDPS><dCompet>2026-10-01</dCompet><tpEmit>1</tpEmit><cLocEmi>3170107</cLocEmi>"
+                + "<prest><CNPJ>" + CnpjPrestador + "</CNPJ><IM>98765</IM><fone>3433334444</fone><email>contato@vigilanciasegura.com.br</email><regTrib><opSimpNac>1</opSimpNac><regEspTrib>0</regEspTrib></regTrib></prest>"
+                + "<toma><CNPJ>" + CnpjPrefeitura + "</CNPJ><IM>1</IM><xNome>MUNICIPIO DE TESTE</xNome><end><endNac><cMun>3170107</cMun><CEP>38010010</CEP></endNac>"
+                + "<xLgr>Praça Rui Barbosa</xLgr><nro>1</nro><xBairro>Centro</xBairro></end><email>financas@teste.mg.gov.br</email></toma>"
+                + "<serv><locPrest><cLocPrestacao>3170107</cLocPrestacao></locPrest><cServ><cTribNac>110201</cTribNac><cTribMun>001</cTribMun><xDescServ>" + System.Security.SecurityElement.Escape(descricao) + "</xDescServ>"
+                + "<cNBS>101010100</cNBS></cServ><infoCompl><xInfComp>Contrato 45/2025 - Empenho 2026/1234</xInfComp></infoCompl></serv>"
+                + "<valores><vServPrest><vServ>12000.00</vServ></vServPrest><trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>2</tpRetISSQN><pAliq>5.00</pAliq></tribMun>"
+                + "<tribFed><piscofins><CST>01</CST><vBCPisCofins>12000.00</vBCPisCofins><pAliqPis>0.65</pAliqPis><pAliqCofins>3.00</pAliqCofins><vPis>78.00</vPis><vCofins>360.00</vCofins>"
+                + "<tpRetPisCofins>2</tpRetPisCofins></piscofins><vRetCP>1320.00</vRetCP><vRetIRRF>60.00</vRetIRRF></tribFed><totTrib><indTotTrib>0</indTotTrib></totTrib></trib></valores>"
+                + "</infDPS></DPS></infNFSe></NFSe>";
+        }
+
         public static string EventoCancelamentoNfse(string chave)
         {
             return "<evento versao=\"1.00\" xmlns=\"http://www.sped.fazenda.gov.br/nfse\"><infEvento Id=\"EVT" + chave + "101101001\"><verAplic>1</verAplic><ambGer>2</ambGer><nSeqEvento>1</nSeqEvento>"

@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
 
 namespace NotasRetencaoINSS
 {
@@ -14,25 +13,17 @@ namespace NotasRetencaoINSS
         public int Xml;
         public int Pdf;
         public int SemXml;          // NF-e que ainda só têm o resumo
-        public int PdfFaltando;     // NFS-e sem PDF (falhou, desistiu ou sem certificado)
-        public int Nfe;             // NF-e não têm PDF pelo programa
-        public bool SemCertificado;
-        public bool DesistiuPdf;
+        public int PdfFalhou;       // XML que não deu para transformar em PDF
         public string MotivoPdf;
+        public int Nfe;             // NF-e não têm PDF pelo programa
         public bool Parado;
 
         public string Resumo()
         {
             var s = new StringBuilder();
             s.Append(Xml + " XML e " + Pdf + " PDF salvos em:\n" + Pasta);
-            if (PdfFaltando > 0)
-            {
-                s.Append("\n\n" + PdfFaltando + " NFS-e ficaram sem PDF");
-                if (SemCertificado) s.Append(": sem o certificado o programa não busca o PDF no ADN.");
-                else if (DesistiuPdf) s.Append(". O ADN recusou o PDF " + Exportador.DesistirAposFalhas + " vezes seguidas e o programa parou de pedir. Último motivo: " + MotivoPdf + ".");
-                else s.Append(". Último motivo: " + MotivoPdf + ". Tente salvar de novo mais tarde (os PDF que já vieram não são baixados outra vez).");
-            }
-            if (Nfe > 0) s.Append("\n\n" + Nfe + " NF-e saíram só com o XML: a SEFAZ não entrega o PDF (DANFE).");
+            if (PdfFalhou > 0) s.Append("\n\n" + PdfFalhou + " NFS-e ficaram sem PDF (o XML foi salvo). Motivo: " + MotivoPdf);
+            if (Nfe > 0) s.Append("\n\n" + Nfe + " NF-e saíram só com o XML: o programa só monta o PDF de NFS-e.");
             if (SemXml > 0) s.Append("\n\n" + SemXml + " nota(s) ficaram de fora por ainda não ter o XML completo (NF-e só com o resumo: o XML chega nas próximas buscas).");
             if (Parado) s.Append("\n\nInterrompido antes do fim.");
             return s.ToString();
@@ -40,43 +31,29 @@ namespace NotasRetencaoINSS
     }
 
     /// <summary>
-    /// "Salvar XML e PDF": copia o XML guardado de cada nota e, para NFS-e, o PDF oficial (DANFSe)
-    /// baixado do ADN — guardado em dados\pdf para não baixar de novo. Nome dos arquivos:
-    /// "2026-10-21 NFS-e 850393 NOME DO PRESTADOR.xml/.pdf".
+    /// "Salvar XML e PDF": copia o XML guardado de cada nota e, para NFS-e, gera o PDF a partir dele
+    /// (Danfse). Nome dos arquivos: "2026-10-21 NFS-e 850393 NOME DO PRESTADOR.xml/.pdf".
     /// </summary>
     public class Exportador
     {
-        public const int DesistirAposFalhas = 3;
-        public int EsperaPdfMs = 200;
-
         volatile bool parar;
         public void Parar() { parar = true; }
 
-        readonly Configuracao cfg;
-        readonly CertificadoInfo cert;   // null = só XML (e PDF que já estiverem guardados)
+        readonly Func<Nota, bool> cancelada;
         readonly Action<string> progresso;
 
-        public Exportador(Configuracao cfg, CertificadoInfo cert, Action<string> progresso)
+        public Exportador(Func<Nota, bool> cancelada, Action<string> progresso)
         {
-            this.cfg = cfg;
-            this.cert = cert;
+            this.cancelada = cancelada ?? (n => false);
             this.progresso = progresso ?? (s => { });
-        }
-
-        /// <summary>Alguma destas NFS-e ainda não tem o PDF guardado? (Só então o certificado é necessário.)</summary>
-        public static bool PrecisaBaixarPdf(IEnumerable<Nota> notas)
-        {
-            return notas.Any(n => n.Tipo == "nfse" && !File.Exists(Armazenamento.CaminhoPdf(n)));
         }
 
         public ResultadoExportacao Executar(IList<Nota> notas, string pasta)
         {
             parar = false;
             Directory.CreateDirectory(pasta);
-            var res = new ResultadoExportacao { Pasta = pasta, SemCertificado = cert == null };
+            var res = new ResultadoExportacao { Pasta = pasta };
             var usados = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            bool pedirPdf = cert != null;
-            int falhasSeguidas = 0;
 
             for (int i = 0; i < notas.Count; i++)
             {
@@ -88,38 +65,46 @@ namespace NotasRetencaoINSS
                 if (xml == null || !File.Exists(xml)) { res.SemXml++; continue; }
 
                 string nome = NomeUnico(n, usados);
-                Copiar(xml, Path.Combine(pasta, nome + ".xml"));
+                Gravar(Path.Combine(pasta, nome + ".xml"), File.ReadAllBytes(xml));
                 res.Xml++;
 
                 if (n.Tipo != "nfse") { res.Nfe++; continue; }
-
-                string pdf = Armazenamento.CaminhoPdf(n);
-                if (!File.Exists(pdf))
+                byte[] pdf;
+                try { pdf = Danfse.GerarPdf(File.ReadAllText(xml, Encoding.UTF8), cancelada(n)); }
+                catch (Exception ex)
                 {
-                    if (!pedirPdf) { res.PdfFaltando++; continue; }
-                    try
-                    {
-                        Armazenamento.GravarPdf(n, Adn.Danfse(cert.Certificado, cfg, n.Chave));
-                        falhasSeguidas = 0;
-                    }
-                    catch (ErroAviso ex)
-                    {
-                        res.PdfFaltando++;
-                        res.MotivoPdf = ex.Message;
-                        if (++falhasSeguidas >= DesistirAposFalhas) { pedirPdf = false; res.DesistiuPdf = true; }
-                        continue;
-                    }
-                    if (EsperaPdfMs > 0) Thread.Sleep(EsperaPdfMs);
+                    res.PdfFalhou++;
+                    res.MotivoPdf = ex is ErroAviso ? ex.Message : "XML ilegível (" + ex.Message + ")";
+                    continue;
                 }
-                Copiar(pdf, Path.Combine(pasta, nome + ".pdf"));
+                Gravar(Path.Combine(pasta, nome + ".pdf"), pdf);
                 res.Pdf++;
             }
             return res;
         }
 
-        static void Copiar(string origem, string destino)
+        /// <summary>Gera o PDF de uma NFS-e na pasta de dados (dados\pdf\...) para abrir na tela. Devolve o caminho.</summary>
+        public static string PdfParaAbrir(Nota n, bool cancelada)
         {
-            try { File.Copy(origem, destino, true); }
+            if (n.Tipo != "nfse") throw new ErroAviso("O programa só monta o PDF de NFS-e. Para NF-e, use o XML.");
+            string xml = string.IsNullOrEmpty(n.ArquivoXml) ? null : Armazenamento.CaminhoCompleto(n.ArquivoXml);
+            if (xml == null || !File.Exists(xml)) throw new ErroAviso("O XML desta nota não está na pasta de dados.");
+            byte[] pdf = Danfse.GerarPdf(File.ReadAllText(xml, Encoding.UTF8), cancelada);
+            string caminho = Armazenamento.CaminhoPdf(n);
+            Directory.CreateDirectory(Path.GetDirectoryName(caminho));
+            try { File.WriteAllBytes(caminho, pdf); }
+            catch (IOException)
+            {
+                // Aberto no leitor de PDF: grava ao lado com outro nome.
+                caminho = Path.Combine(Path.GetDirectoryName(caminho), n.Chave + " " + DateTime.Now.ToString("HHmmss") + ".pdf");
+                File.WriteAllBytes(caminho, pdf);
+            }
+            return caminho;
+        }
+
+        static void Gravar(string destino, byte[] conteudo)
+        {
+            try { File.WriteAllBytes(destino, conteudo); }
             catch (IOException ex) { throw new ErroAviso("Não foi possível salvar " + Path.GetFileName(destino) + " (o arquivo está aberto em outro programa?):\n" + ex.Message); }
             catch (UnauthorizedAccessException) { throw new ErroAviso("Sem permissão para gravar em " + Path.GetDirectoryName(destino) + ". Escolha outra pasta."); }
         }
